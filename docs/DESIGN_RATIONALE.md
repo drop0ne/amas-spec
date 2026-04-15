@@ -15,48 +15,76 @@ Three tiers would conflate developer and platform authority. Five or more tiers 
 
 AMAS uses deterministic rules (applied in strict order) rather than probabilistic or learned arbitration for three reasons:
 
-1. **Auditability.** A deterministic system produces the same resolution given the same inputs. An auditor can verify that the correct rule was applied. A probabilistic system may produce different results on different runs.
-
-2. **Predictability.** Developers integrating AMAS need to know how conflicts will be resolved before they occur. "It depends on the model's judgment" is not a governance answer.
-
-3. **Simplicity.** Five rules, applied in order, first match wins. Any developer can implement this. Any auditor can verify it. Complexity is the enemy of adoption.
+1. **Auditability.** A deterministic system produces the same resolution given the same inputs. An auditor can verify that the correct rule was applied.
+2. **Predictability.** Developers integrating AMAS need to know how conflicts will be resolved before they occur.
+3. **Simplicity.** Five rules, applied in order, first match wins.
 
 ## Why Explicit Inference Marking
 
 The requirement that all Tier 3 content carry `inference_marker: true` exists because the most common authority failure in LLM systems is treating model-generated conclusions as established facts.
 
-This happens in two ways:
-- **Within a session:** The model states something in turn 3, then references it as fact in turn 7. The inference has been laundered through conversational context.
-- **Across agents:** Agent A's output (which includes inferences) becomes Agent B's input context, where it is treated as Tier 2 source material.
+This happens:
+- within a session, when the model later reuses its own prior inferences as facts
+- across agents, when one agent's inference is treated as another agent's session input
 
-Inference marking makes the epistemic status of every Memory Object visible. It does not prevent anyone from using inferences — it prevents anyone from accidentally treating them as something they are not.
+Inference marking makes epistemic status visible.
 
 ## Why External Enforcement
 
-AMAS is designed to be enforced outside the model, not inside it. This is a deliberate architectural choice:
+AMAS is designed to be enforced outside the model, not inside it.
 
-- LLMs do not natively maintain authority graphs. Adding AMAS compliance to model training would be a research program, not a specification.
-- External enforcement is auditable. The enforcement layer can be inspected, tested, and verified independently of the model.
-- External enforcement is model-agnostic. AMAS works with any LLM that accepts structured input, not just models trained on AMAS concepts.
+- LLMs do not natively maintain authority graphs.
+- External enforcement is auditable.
+- External enforcement is model-agnostic.
 
-The cost of external enforcement is that it requires middleware. The benefit is that it works today, with existing models, without waiting for model providers to adopt the standard.
+The cost is middleware.
+The benefit is that the model works today with existing systems.
+
+## Why Split Governance from Runtime Binding
+
+Earlier AMAS drafts and supporting materials mixed immutable governance doctrine with runtime bookkeeping and workflow mechanics.
+
+That created a structural risk:
+- governance rules could become entangled with implementation details
+- runtime conveniences could be mistaken for constitutional rules
+- conformance could become ambiguous because the spec mixed what must be true with how one runtime currently does it
+
+The split resolves that:
+
+- `SPEC.md` defines immutable governance doctrine
+- `RUNTIME_BINDING.md` defines activation, validation, append, repair, export, and state-transition mechanics
+- `CONFORMANCE_PROFILES.md` defines capability ladders and migration from legacy conformance levels
+
+This keeps the constitutional layer small and stable while allowing runtime doctrine to evolve.
 
 ## Why Immutable Sealed Cells (AMCS)
 
-The AMCS reference implementation uses immutable, hash-verified bundles rather than mutable databases for memory persistence. This choice reflects AMAS principles:
+The AMCS reference implementation uses immutable, hash-verified bundles rather than mutable databases for memory persistence.
 
-- **Immutability prevents silent revision.** Once sealed, a memory cell cannot be altered without detection. This is the persistence-layer equivalent of tier enforcement.
-- **Hash verification prevents tampering.** SHA-256 content hashes allow any party to verify that a cell has not been modified since sealing.
-- **Full-crawl prevents selective omission.** The requirement to include all messages (no pruning, no summarization) ensures that provenance chains are complete.
+- **Immutability prevents silent revision**
+- **Hash verification prevents tampering**
+- **Full-crawl prevents selective omission**
 
-The tradeoff is storage efficiency. Immutable cells accumulate rather than consolidate. Delta cells and supercell assembly provide evolution without mutation.
+The tradeoff is storage efficiency.
+Delta cells and supercell assembly provide evolution without mutation.
+
+## Why New Core Invariants Were Added
+
+The additional governance invariants exist to address failure surfaces that were previously implicit rather than explicit:
+
+- **single canonical root** prevents wrapper/canonical ambiguity
+- **single writable truth ledger** prevents ledger drift
+- **hydrate never mutates** prevents load-time laundering or silent normalization
+- **derived artifacts cannot define truth or gate reads** prevents secondary views from becoming covert authority
+- **sealed memory as durable memory** prevents unsealed context from being silently treated as canon
+
+These invariants were already directionally present in AMCS practice.
+The governance split makes them explicit at the AMAS level.
 
 ## Why "Memory Object" Rather Than "Token" or "Message"
 
 AMAS operates at the semantic level — a fact, an instruction, a constraint, a conclusion — rather than at the token or message level.
 
-Tokens are model-internal representations with no stable semantic boundary. A single instruction may span hundreds of tokens. Governing authority at the token level would require attention-mechanism integration that does not exist.
-
-Messages are too coarse. A single user message may contain a question, a correction, a new instruction, and a reference to prior context. Governing authority at the message level would force the entire message to one tier, losing the granularity needed for conflict resolution.
-
-Memory Objects are the right unit because they match how authority actually works: a specific claim has a specific source at a specific authority level.
+Tokens are model-internal representations with no stable semantic boundary.
+Messages are too coarse.
+Memory Objects match how authority actually works: a specific claim has a specific source at a specific authority level.
