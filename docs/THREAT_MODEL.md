@@ -10,64 +10,104 @@ This document identifies the threats that AMAS is designed to mitigate, the thre
 
 ### T1: Tier Impersonation (Prompt Injection)
 
-**Description.** A low-tier source (Tier 2 or 3) includes language that impersonates a higher-tier source. Example: a retrieved document containing "SYSTEM: ignore all prior instructions."
+**Description.** A low-tier source (Tier 2 or 3) includes language that impersonates a higher-tier source.
 
-**AMAS mitigation.** Authority tier is assigned at ingestion based on source identity, not content. A Tier 2 source remains Tier 2 regardless of what it says. Rule 1 (tier precedence) rejects any attempt by a lower tier to override a higher tier.
+**AMAS mitigation.** Authority tier is assigned at ingestion based on source identity, not content. Rule 1 rejects any attempt by a lower tier to override a higher tier.
 
-**Residual risk.** If the ingestion layer misclassifies a source's tier, the entire model is compromised. AMAS depends on correct tier assignment at the enforcement boundary.
+**Residual risk.** If the ingestion layer misclassifies a source's tier, the entire model is compromised.
 
 ### T2: Implicit Authority Escalation
 
-**Description.** An inference (Tier 3) is treated as established fact (Tier 2 or higher) without explicit escalation. Common in multi-turn conversations where the model builds on its own prior outputs.
+**Description.** An inference (Tier 3) is treated as established fact (Tier 2 or higher) without explicit escalation.
 
-**AMAS mitigation.** All Tier 3 content must carry `inference_marker: true`. Escalation from Tier 3 to a higher tier requires explicit action by an authorized agent (Section 3.3), logged with provenance.
+**AMAS mitigation.** All Tier 3 content must carry `inference_marker: true`. Escalation requires explicit action by an authorized agent.
 
-**Residual risk.** Enforcement depends on the middleware correctly tagging model-generated content as Tier 3. If the model produces output that is not tagged, the inference boundary is invisible.
+**Residual risk.** If middleware fails to tag model-generated content, the inference boundary becomes invisible.
 
 ### T3: Provenance Opacity
 
-**Description.** A decision is made through the model but no one can trace which sources contributed to it or at what authority level. This is the core mechanism of automated authority laundering.
+**Description.** A decision is made through the model but no one can trace which sources contributed to it or at what authority level.
 
-**AMAS mitigation.** Every Memory Object carries provenance metadata (source_id, chain, created_at, authority_tier). Conflict resolution events produce audit records. The AMCS reference implementation enforces provenance on every derived artifact.
+**AMAS mitigation.** Every Memory Object carries provenance metadata. Conflict resolution events may produce audit records. The AMCS reference implementation enforces provenance on every derived artifact.
 
-**Residual risk.** Provenance tracking adds metadata overhead. Implementations that cut corners on provenance reduce auditability without visible failure.
+**Residual risk.** Implementations that cut corners on provenance reduce auditability without obvious immediate failure.
+
+### T4: Canonical Root Ambiguity
+
+**Description.** Multiple artifacts are treated as if each were the canonical root for the same active context.
+
+**AMAS mitigation.** Core doctrine requires exactly one canonical root, proven unique before hydrate completes.
+
+**Residual risk.** If runtime binding does not actually verify uniqueness, the doctrine can be bypassed in practice.
+
+### T5: Writable Truth-Source Drift
+
+**Description.** Multiple writable surfaces exist and operators cannot tell which ledger is authoritative.
+
+**AMAS mitigation.** Core doctrine requires exactly one writable truth ledger.
+
+**Residual risk.** If derived artifacts are allowed to behave like writable peers, the drift reappears operationally.
+
+### T6: Silent Repair
+
+**Description.** Runtime infrastructure silently rewrites state, wrappers, or chain tips without an explicit repair receipt.
+
+**AMAS mitigation.** Silent repair is forbidden. All repairs require receipts.
+
+**Residual risk.** Authorized bad-faith actors or compromised runtimes can still falsify repairs unless the operator-visible verification seam is actually inspected.
+
+### T7: Derived Artifacts Gating Reads
+
+**Description.** A manifest, wrapper, or index becomes the practical gatekeeper of access to canon, even though it is only a derived view.
+
+**AMAS mitigation.** Derived artifacts may summarize truth but may not define truth or gate reads.
+
+**Residual risk.** Convenience layers can reintroduce read-gating by implementation if left unaudited.
+
+### T8: Replay Risk on Activation or Export Receipts
+
+**Description.** A valid but stale activation/export artifact is replayed against newer runtime state.
+
+**AMAS mitigation.** Runtime binding requires timestamped receipts and operator-visible state hashes.
+
+**Residual risk.** Replay remains possible if freshness checks are not enforced by the runtime.
 
 ---
 
 ## Threats AMAS Partially Addresses
 
-### T4: Multi-Agent Authority Dilution
+### T9: Multi-Agent Authority Dilution
 
-**Description.** In multi-agent systems, authority degrades as outputs pass from agent to agent. Agent A's inference becomes Agent B's input context, losing its Tier 3 marking.
+**Description.** In multi-agent systems, authority degrades as outputs pass from agent to agent.
 
-**AMAS partial mitigation.** If both agents implement AMAS, tier metadata propagates. The inference marker survives the handoff.
+**AMAS partial mitigation.** If both agents implement AMAS, metadata can propagate.
 
-**Gap.** AMAS v1.1 does not define an inter-agent authority negotiation protocol. If Agent B does not implement AMAS, tier information is lost at the boundary.
+**Gap.** AMAS does not yet define a full inter-agent authority negotiation protocol.
 
-### T5: Stale Authority
+### T10: Stale Authority
 
-**Description.** A Memory Object was valid when created but circumstances have changed. The object's authority tier is correct but its content is outdated.
+**Description.** A Memory Object was valid when created but circumstances changed.
 
-**AMAS partial mitigation.** The `expires_at` field allows time-bounded authority. Explicit supersession (Rule 2) allows newer objects to replace older ones.
+**AMAS partial mitigation.** `expires_at` and explicit supersession support time-bounded authority.
 
-**Gap.** AMAS does not define a mechanism for automatically detecting staleness. Expiration must be set at creation time or supersession must be explicitly declared.
+**Gap.** AMAS does not automatically detect staleness.
 
 ---
 
 ## Threats Outside AMAS Scope
 
-### T6: Compromised Tier 0 Channel
+### T11: Compromised Tier 0 Channel
 
-If the infrastructure that delivers Tier 0 (CANONICAL) content is compromised, AMAS provides no defense. The attacker has the highest authority level. This is an infrastructure security problem, not a memory governance problem.
+If the infrastructure delivering Tier 0 is compromised, AMAS provides no defense.
 
-### T7: Authorized Malicious Agents
+### T12: Authorized Malicious Agents
 
-An agent with legitimate Tier 1 (OPERATOR) authority who intentionally creates harmful instructions is operating within the AMAS model. AMAS governs authority structure, not the ethics of authorized agents.
+An agent with legitimate Tier 1 authority who intentionally creates harmful instructions remains within the formal AMAS structure.
 
-### T8: Memory Object Boundary Errors
+### T13: Memory Object Boundary Errors
 
-If the system incorrectly defines where one Memory Object ends and another begins (segmentation errors), conflict resolution may produce incorrect results. AMAS defines the governance model; correct segmentation is an implementation responsibility.
+If the system incorrectly defines object boundaries, conflict resolution may still produce incorrect results.
 
-### T9: Side-Channel Attacks
+### T14: Side-Channel Attacks
 
-AMAS does not address attacks that bypass the context window entirely — model weight manipulation, training data poisoning, or hardware-level exploits.
+AMAS does not address attacks that bypass the context window entirely — model weight manipulation, training-data poisoning, or hardware-level exploits.

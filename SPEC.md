@@ -1,8 +1,8 @@
 # Authority Mapping and Arbitration System (AMAS)
 
-**Version:** 1.1  
+**Version:** 2.0-draft  
 **Status:** Draft — Open for Review  
-**Date:** 2026-04-03  
+**Date:** 2026-04-14  
 **Author:** Jacob Dougherty  
 
 ---
@@ -29,7 +29,7 @@ AMAS governs the authority relationship between sources of information within an
 - How conflicts between sources are resolved
 - What metadata must accompany each source
 - How authority can be escalated or delegated
-- What behaviors are prohibited
+- What governance-level behaviors are prohibited
 
 ### 2.2 What AMAS Does Not Govern
 
@@ -40,10 +40,22 @@ AMAS does not govern:
 - Specific safety policies (these are Tier 0 content, not AMAS structure)
 - User interface design
 - Network or infrastructure security
+- Runtime bookkeeping mechanics such as activation payload formats, append state machines, or export proof-bundle serialization
+
+Runtime mechanics are governed by `RUNTIME_BINDING.md`.
 
 ### 2.3 Relationship to Existing Systems
 
 LLMs already have implicit authority biases. API role channels (system/user/assistant), positional effects (instructions at the top of context receive more attention), and platform-level safety layers all create informal authority hierarchies. AMAS does not claim these do not exist. It provides a formal, enforceable, auditable framework that makes authority relationships explicit rather than emergent.
+
+### 2.4 Separation of Governance and Runtime
+
+AMAS is an immutable governance constitution.
+It defines what authority is, how conflicts are arbitrated, and which boundaries must never be crossed.
+
+Runtime mechanics that implement AMAS — activation, validation, append, repair, export, and state transitions — are specified separately in `RUNTIME_BINDING.md`.
+
+Conformance capability ladders are specified separately in `CONFORMANCE_PROFILES.md`.
 
 ---
 
@@ -129,15 +141,83 @@ The AMCS epistemic strata (FIRST-ORDER, SECOND-ORDER, THIRD-ORDER) provide the l
 
 ---
 
-## 4. Memory Object Schema
+## 4. Core Governance Invariants
 
-### 4.1 Unit of Authority
+The following invariants are part of AMAS core doctrine.
+
+### 4.1 Single Canonical Root
+
+Exactly one canonical root MUST exist for an active memory context.
+
+### 4.2 Root Uniqueness Before Hydrate Completes
+
+The canonical root MUST be proven unique before hydrate completes.
+
+### 4.3 Single Writable Truth Ledger
+
+Exactly one writable truth ledger MAY exist for an active memory context.
+All other artifacts are derived and non-canonical.
+
+### 4.4 Explicit Memory Only
+
+Silence never implies persistence.
+Default memory state is empty unless explicitly rehydrated.
+
+### 4.5 Hydrate Never Mutates
+
+Hydrate is read-only.
+Hydrate MUST NOT append, repair, normalize, export, or rewrite state.
+
+### 4.6 Provenance-Gated Activation
+
+Hydrated active memory MUST carry provenance sufficient to map it to an authority tier or approved source class.
+
+### 4.7 Invalid or Unprovenanced Memory
+
+Invalid or unprovenanced memory MUST NOT activate.
+
+### 4.8 Derived Artifact Discipline
+
+Derived artifacts may summarize truth, but they MUST NOT define truth.
+Derived artifacts MUST NOT gate reads.
+
+### 4.9 Activation Gate
+
+No mutation MAY occur without validated activation.
+
+### 4.10 Preflight Gate
+
+Preflight MUST pass before append, repair, or export.
+
+### 4.11 Lineage Preservation
+
+Any mutation that extends state MUST preserve provenance and lineage.
+
+### 4.12 Repair Doctrine
+
+Silent repair is forbidden.
+No silent chain-tip replacement is allowed.
+All repairs require receipts.
+
+### 4.13 Export Doctrine
+
+No export may occur without conformance validation.
+
+### 4.14 Durable Memory Rule
+
+Only sealed memory counts as durable memory.
+
+---
+
+## 5. Memory Object Schema
+
+### 5.1 Unit of Authority
 
 The fundamental unit of authority in AMAS is the **Memory Object** (MO). A Memory Object is a discrete, self-contained unit of information with attached metadata that establishes its provenance, authority tier, and lifecycle properties.
 
 Memory Objects operate at the semantic level — a fact, an instruction, a constraint, a conclusion — not at the token level. Tokens are a model-internal representation with no stable semantic boundary. Implementations MUST define a mapping between their internal context representation and AMAS Memory Objects.
 
-### 4.2 Required Fields
+### 5.2 Required Fields
 
 Every Memory Object MUST include:
 
@@ -152,7 +232,7 @@ Every Memory Object MUST include:
 | `mutable` | boolean | Whether this object can be modified after creation |
 | `inference_marker` | boolean | True if this object is Tier 3 inferred content |
 
-### 4.3 Optional Fields
+### 5.3 Optional Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -164,7 +244,7 @@ Every Memory Object MUST include:
 | `provenance` | object or null | Origin chain and audit trail |
 | `authn_context` | string or null | Authentication context for escalation verification |
 
-### 4.4 Schema (JSON Schema Draft 2020-12)
+### 5.4 Schema (JSON Schema Draft 2020-12)
 
 ```json
 {
@@ -210,38 +290,38 @@ Every Memory Object MUST include:
 
 ---
 
-## 5. Conflict Resolution Protocol
+## 6. Conflict Resolution Protocol
 
-### 5.1 Applicability
+### 6.1 Applicability
 
 This protocol applies whenever two or more Memory Objects produce conflicting directives, claims, or constraints within the model's operational context.
 
-### 5.2 Resolution Rules
+### 6.2 Resolution Rules
 
 Conflicts are resolved by applying the following rules in strict order. The first rule that produces a determinate result terminates the resolution process.
 
-**Rule 1 — Tier Precedence.**
+**Rule 1 — Tier Precedence.**  
 The Memory Object at the higher authority tier prevails. A Tier 0 object always prevails over Tier 1, 2, or 3. A Tier 1 object always prevails over Tier 2 or 3. This rule is absolute and admits no exceptions.
 
-**Rule 2 — Explicit Supersession.**
+**Rule 2 — Explicit Supersession.**  
 Within the same tier, if one Memory Object explicitly supersedes another (via the `supersedes` field), the superseding object prevails, provided:
 - The supersession is authorized (the creating agent has authority at or above the tier)
 - The supersession chain is traceable
 
-**Rule 3 — Recency.**
+**Rule 3 — Recency.**  
 Within the same tier, absent explicit supersession, the more recently created Memory Object prevails.
 
-**Rule 4 — Specificity.**
+**Rule 4 — Specificity.**  
 Within the same tier, same recency, the more specific Memory Object prevails over the more general.
 
-**Rule 5 — Conservative Default.**
+**Rule 5 — Conservative Default.**  
 If no preceding rule resolves the conflict, the system MUST either:
 - Apply the more restrictive interpretation, OR
 - Flag the conflict for operator resolution and halt the conflicting operation
 
 Systems MUST NOT silently choose the less restrictive interpretation.
 
-### 5.3 Resolution Audit
+### 6.3 Resolution Audit
 
 Every conflict resolution event SHOULD produce an audit record containing:
 - The conflicting Memory Object IDs
@@ -251,15 +331,15 @@ Every conflict resolution event SHOULD produce an audit record containing:
 
 ---
 
-## 6. Security Model
+## 7. Security Model
 
-### 6.1 Prompt Injection Resistance
+### 7.1 Prompt Injection Resistance
 
 AMAS provides structural resistance to prompt injection by enforcing tier boundaries. A prompt injection attack typically involves a Tier 2 source (user input, retrieved document) attempting to override Tier 0 or Tier 1 constraints. Under AMAS, Rule 1 (tier precedence) deterministically rejects this override regardless of how the injection is phrased.
 
 This does not eliminate all injection vectors — an attacker who compromises a Tier 1 channel has Tier 1 authority — but it eliminates the most common class of attacks where low-tier input impersonates high-tier authority.
 
-### 6.2 Automated Authority Laundering
+### 7.2 Automated Authority Laundering
 
 **Definition.** Automated authority laundering occurs when a consequential decision is made through an AI system in a way that obscures who authorized the decision and at what level. The AI system acts as a pass-through that converts ambiguous or unauthorized instructions into apparently legitimate outputs, laundering the authority through the model's context window.
 
@@ -269,47 +349,64 @@ This does not eliminate all injection vectors — an attacker who compromises a 
 
 **AMAS mitigation.** By requiring every Memory Object to carry provenance metadata and authority tier classification, AMAS makes the authority chain auditable. Laundering becomes detectable because the tier transition is visible: an object that arrives as Tier 2 cannot be treated as Tier 0 without an explicit, logged escalation event.
 
-### 6.3 Threat Model and Residual Risk
+### 7.3 Threat Model and Residual Risk
 
 AMAS addresses:
-- Tier impersonation (low-tier input claiming high-tier authority)
-- Implicit authority escalation (inferred content treated as established)
-- Provenance opacity (decisions without traceable authorization)
+- tier impersonation
+- implicit authority escalation
+- provenance opacity
+- canonical root ambiguity
+- writable truth-source drift
+- silent repair
+- derived-artifact read-gating
 
 AMAS does not address:
-- Authority spoofing at the infrastructure level (compromised Tier 0 channel)
-- Escalation abuse by authorized agents acting in bad faith
-- Replay attacks using valid but expired authority
-- Segmentation errors where Memory Object boundaries are incorrectly defined
+- authority spoofing at the infrastructure level (compromised Tier 0 channel)
+- escalation abuse by authorized agents acting in bad faith
+- replay attacks using valid but expired authority unless the runtime binding checks receipt freshness
+- segmentation errors where Memory Object boundaries are incorrectly defined
 
 These residual risks require complementary security measures outside the AMAS specification.
 
 ---
 
-## 7. Conformance Profiles
+## 8. Conformance
 
-### 7.1 Levels
+### 8.1 Legacy Inline Model
 
-AMAS defines three conformance levels to support incremental adoption:
+AMAS v1.1 defined three inline conformance levels:
 
-**Level 1 — Minimal Conformance.**
+**Level 1 — Minimal Conformance.**  
 Implements the 4-tier hierarchy. Tags all Memory Objects with `authority_tier`. Applies Rule 1 (tier precedence) deterministically. Marks all Tier 3 content with `inference_marker: true`.
 
-**Level 2 — Standard Conformance.**
+**Level 2 — Standard Conformance.**  
 Level 1 requirements, plus: full 5-rule conflict resolution protocol. Memory Object schema with all required fields. Provenance tracking. Inference boundary enforcement.
 
-**Level 3 — Full Conformance.**
+**Level 3 — Full Conformance.**  
 Level 2 requirements, plus: authority escalation protocol with authentication context. Cross-context inference boundaries. Conflict resolution audit trail. Memory Object lifecycle management (expiration, supersession chains).
 
-### 7.2 Conformance Declaration
+### 8.2 Forward-Looking Profile Model
 
-Implementations SHOULD declare their conformance level in their documentation or runtime configuration. The declaration is informational and enables interoperability assessment.
+The repository is transitioning toward a separated capability-ladder model documented in `CONFORMANCE_PROFILES.md`.
+
+That file introduces:
+- `C1` read-only hydrate
+- `C2` hydrate + validate
+- `C3` append-capable
+- `C4` persistent-runtime full conformance
+
+The legacy inline Level 1–3 model is preserved here for continuity.
+The profile-based model should be used as the forward-looking doctrine surface.
+
+### 8.3 Conformance Declaration
+
+Implementations SHOULD declare their conformance level or profile in their documentation or runtime configuration. The declaration is informational and enables interoperability assessment.
 
 ---
 
-## 8. Implementation Guidance
+## 9. Implementation Guidance
 
-### 8.1 Enforcement Architecture
+### 9.1 Enforcement Architecture
 
 AMAS is designed to be enforced externally to the model. LLMs do not natively maintain authority graphs or tier hierarchies in their attention mechanisms. Enforcement is implemented through:
 
@@ -317,84 +414,70 @@ AMAS is designed to be enforced externally to the model. LLMs do not natively ma
 - **Output validation layers** that verify model outputs do not violate tier constraints.
 - **Memory management middleware** that maintains the authority graph across sessions.
 
-### 8.2 Reference Implementation
+Runtime mechanics for these layers are defined in `RUNTIME_BINDING.md`.
 
-The AMCS (Atticus Memory Cell Sealing Protocol) runtime, included in this repository, demonstrates Level 2+ conformance through:
+### 9.2 Reference Implementation
 
-- Immutable sealed memory cells with SHA-256 integrity verification
-- Full-crawl provenance (every derived artifact links to source prompts and responses)
-- Deterministic IDs and hash-based content addressing
-- Narrative/canonical separation (NCS-1 protocol)
-- Explicit rehydration with no implicit memory loading
-- Epistemic strata enforcement (FIRST-ORDER / SECOND-ORDER / THIRD-ORDER labeling)
-- Edge epistemic classification on all graph relationships
+The AMCS (Atticus Memory Cell Sealing Protocol) runtime, included in this repository, demonstrates Level 2+ / Level 3-style conformance through:
 
-The full AMCS v1.2.1 specification is provided in `spec/AMCS_v1.2.1.md` (17 sections, with conformance checklist). Section 3.4 of this document maps AMAS authority tiers to the AMCS authority order.
+- immutable sealed memory cells with SHA-256 integrity verification
+- full-crawl provenance
+- deterministic IDs and hash-based content addressing
+- narrative/canonical separation (NCS-1 protocol)
+- explicit rehydration with no implicit memory loading
+- epistemic strata enforcement
+- edge epistemic classification on all graph relationships
 
-See `reference/` for the Python implementation (standard library only, ~980 LOC).
+The full AMCS v1.2.1 specification is provided in `spec/AMCS_v1.2.1.md`. Section 3.4 of this document maps AMAS authority tiers to the AMCS authority order.
 
-### 8.3 Pseudocode: Conflict Resolution
+See `reference/` for the Python implementation.
+
+### 9.3 Pseudocode: Conflict Resolution
 
 ```python
 def resolve_conflict(mo_a: MemoryObject, mo_b: MemoryObject) -> MemoryObject:
-    """Resolve a conflict between two Memory Objects using AMAS rules."""
-    
-    # Rule 1: Tier precedence
     if mo_a.authority_tier != mo_b.authority_tier:
         return mo_a if mo_a.authority_tier < mo_b.authority_tier else mo_b
-    
-    # Rule 2: Explicit supersession
+
     if mo_a.supersedes == mo_b.object_id:
         if valid_supersession(mo_a, mo_b):
             return mo_a
     if mo_b.supersedes == mo_a.object_id:
         if valid_supersession(mo_b, mo_a):
             return mo_b
-    
-    # Rule 3: Recency
+
     if mo_a.created_at != mo_b.created_at:
         return mo_a if mo_a.created_at > mo_b.created_at else mo_b
-    
-    # Rule 4: Specificity
+
     if specificity_score(mo_a) != specificity_score(mo_b):
         return mo_a if specificity_score(mo_a) > specificity_score(mo_b) else mo_b
-    
-    # Rule 5: Conservative default
+
     return more_restrictive(mo_a, mo_b) or flag_for_operator(mo_a, mo_b)
-
-
-def valid_supersession(new: MemoryObject, old: MemoryObject) -> bool:
-    """Verify supersession is authorized per Section 3.3."""
-    return (
-        new.authority_tier <= old.authority_tier
-        and new.authn_context is not None
-        and new.provenance is not None
-    )
 ```
 
 ---
 
-## 9. Limitations
+## 10. Limitations
 
 AMAS is a governance specification, not a complete safety system. Specific limitations:
 
 - **Enforcement dependency.** AMAS requires an external enforcement layer. Models that process AMAS-tagged context without enforcement middleware may ignore tier constraints.
 - **Specificity ambiguity.** Rule 4 (specificity) requires a scoring function that AMAS does not fully define. Implementations must document their specificity criteria.
-- **Single-system scope.** AMAS v1.1 governs authority within a single model's context. Multi-agent authority negotiation — where multiple AMAS-governed agents interact — is deferred to a future extension.
+- **Single-system scope.** AMAS v1.1 governs authority within a single model's context. Multi-agent authority negotiation is deferred to a future extension.
 - **No retroactive application.** AMAS cannot govern context that was not tagged at creation time. Legacy systems require a migration strategy.
 
 ---
 
-## 10. Future Work
+## 11. Future Work
 
-- **Multi-agent authority negotiation.** Extension of the tier model to support authority delegation and negotiation between multiple AI agents operating in shared contexts.
-- **Conformance test suite.** Standardized tests that verify an implementation correctly applies tier precedence, conflict resolution, and inference boundary rules.
-- **Prompt injection benchmark.** Quantitative evaluation of AMAS-governed systems against known injection attack patterns.
-- **Native model support.** Collaboration with model providers to explore attention-level or embedding-level authority weighting, reducing dependence on external enforcement.
+- multi-agent authority negotiation
+- conformance test suite
+- prompt injection benchmark
+- native model support
 
 ---
 
-## 11. References
+## 12. References
 
 This specification is an original work. The following areas of prior art informed its development:
 
@@ -404,16 +487,17 @@ This specification is an original work. The following areas of prior art informe
 - Prompt injection research (Greshake et al., 2023; Perez & Ribeiro, 2022) for threat model analysis
 - Retrieval-augmented generation architectures for context assembly patterns
 
-AMAS draws on these concepts but defines a novel governance model specific to AI memory and context authority. No prior specification addresses the same problem space with a formal authority hierarchy over memory objects. This novelty claim is provisional and subject to further prior-art review.
+AMAS draws on these concepts but defines a novel governance model specific to AI memory and context authority.
 
 ---
 
-## 12. Document History
+## 13. Document History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-03-08 | Initial specification. 4-tier hierarchy, 5-rule conflict resolution, Memory Object schema, pseudocode appendix. |
-| 1.1 | 2026-03-08 | Authority escalation protocol (Section 3.3). Threat model and residual risk (Section 6.3). Conformance profiles (Section 7). Refined confidence field description. Measured novelty claim. |
+| 1.1 | 2026-04-03 | Authority escalation protocol, threat model and residual risk, conformance profiles, refined confidence field description. |
+| 2.0-draft | 2026-04-14 | Governance core hardening, runtime-binding split, conformance-profile split, explicit invariants for canonical root, truth-ledger discipline, hydrate immutability, repair/export doctrine. |
 
 ---
 

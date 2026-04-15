@@ -2,7 +2,7 @@
 
 **A formal governance model for memory authority in Large Language Models.**
 
-Version: 1.1 (Draft)  
+Version: 2.0-draft  
 Status: Open for review  
 Author: Jacob Dougherty  
 License: Apache 2.0
@@ -31,7 +31,7 @@ AMAS provides that model.
 
 ## What AMAS Defines
 
-### Authority Hierarchy
+### Governance Core
 
 AMAS establishes four tiers of memory authority, ordered by precedence:
 
@@ -41,6 +41,16 @@ AMAS establishes four tiers of memory authority, ordered by precedence:
 | 1 | **OPERATOR** | Developer or deployer instructions. Configures behavior within the boundaries set by Tier 0. |
 | 2 | **SESSION** | User messages, conversation history, uploaded documents, tool outputs. The runtime context of a single interaction. |
 | 3 | **INFERRED** | Conclusions drawn by the model from available context. Must be explicitly marked as inference. Lowest authority; never overrides any other tier. |
+
+The AMAS governance core also defines immutable invariants for:
+- single canonical root resolution
+- single writable truth-ledger discipline
+- explicit memory activation
+- hydrate immutability
+- provenance-gated activation
+- derived-artifact truth and read boundaries
+- repair and export discipline
+- sealed-memory durability
 
 ### Conflict Resolution Protocol
 
@@ -54,33 +64,19 @@ When memory sources conflict, AMAS applies five deterministic rules in order:
 
 ### Memory Object Schema
 
-Every item in the authority hierarchy is a **Memory Object** — a discrete, self-contained unit of information with attached metadata:
+Every item in the authority hierarchy is a **Memory Object** — a discrete, self-contained unit of information with attached metadata.
 
-```json
-{
-  "object_id": "MO-00042",
-  "authority_tier": 0,
-  "content": "The system must not generate content that facilitates harm.",
-  "source_id": "system_constitution_v2",
-  "created_at": "2026-01-15T00:00:00Z",
-  "scope": "global",
-  "mutable": false,
-  "confidence": null,
-  "inference_marker": false,
-  "escalated_from": null,
-  "provenance": {
-    "origin": "platform_developer",
-    "chain": ["constitution_v1", "constitution_v2"]
-  }
-}
-```
+AMAS continues to define the Memory Object model in `SPEC.md`. Runtime mechanics that operate on Memory Objects now live in `RUNTIME_BINDING.md`.
 
-### Tier Interaction Rules
+### Runtime Binding and Conformance
 
-- **Downward immutability.** A lower-tier Memory Object cannot override, modify, or contradict a higher-tier Memory Object.
-- **Upward transparency.** Lower-tier objects may be promoted to a higher tier only through explicit authority escalation by an agent at or above the target tier.
-- **Lateral isolation.** Same-tier objects do not automatically inherit authority from each other.
-- **Inference marking.** All Tier 3 (INFERRED) objects must carry an explicit inference marker. Systems must not present inferred content as though established by a higher tier.
+AMAS governance doctrine is distinct from runtime mechanics.
+
+- `SPEC.md` defines the immutable governance core
+- `RUNTIME_BINDING.md` defines activation, validation, append, repair, export, and state-transition mechanics
+- `CONFORMANCE_PROFILES.md` defines capability ladders and the migration path from the legacy Level 1–3 model
+
+This split prevents governance doctrine from being silently reshaped by runtime bookkeeping details.
 
 ---
 
@@ -104,19 +100,20 @@ As AI systems increasingly operate in multi-agent architectures — where models
 
 ## Conformance Profiles
 
-AMAS defines three levels of conformance for implementations:
+AMAS v1.1 exposed three inline conformance levels. The repository is now transitioning toward a separated capability-ladder model.
 
-| Level | Requirements |
-|-------|-------------|
-| **Level 1 (Minimal)** | Implements the 4-tier hierarchy. Tags all Memory Objects with `authority_tier`. Applies Rule 1 (tier precedence) deterministically. |
-| **Level 2 (Standard)** | Level 1 + full 5-rule conflict resolution. Memory Object schema with provenance. Inference marking enforced. |
-| **Level 3 (Full)** | Level 2 + authority escalation protocol. Cross-cell inference boundaries. Audit trail for all authority decisions. Formal verification of tier integrity. |
+- Legacy inline Levels 1–3 remain summarized in `SPEC.md`
+- Forward-looking capability definitions and migration guidance live in `CONFORMANCE_PROFILES.md`
+
+This preserves continuity for existing readers while allowing the conformance doctrine to evolve independently from the governance core.
 
 ---
 
 ## Reference Implementation
 
 This repository includes **AMCS** (Atticus Memory Cell Sealing Protocol) — a working reference implementation in Python that demonstrates AMAS principles through memory cell sealing, integrity verification, and provenance tracking.
+
+AMCS is a **reference runtime / sealing protocol** operating under AMAS governance. It is not the AMAS governance core itself.
 
 ```bash
 # Seal a conversation into an immutable, hash-verified memory cell
@@ -132,45 +129,47 @@ python3 reference/amcs.py assemble-supercell \
     --out-dir out --supercell-name COMBINED --scope "project_scope"
 ```
 
-See [reference/README.md](reference/README.md) for full documentation.
+See [reference/README.md](reference/README.md) for runtime documentation.
 
 ---
 
 ## Repository Structure
 
-```
+```text
 amas-spec/
-├── README.md                  # This file
-├── SPEC.md                    # Full AMAS v1.1 specification
-├── LICENSE                    # Apache 2.0
-├── CONTRIBUTING.md            # Contribution guidelines
+├── README.md
+├── SPEC.md
+├── RUNTIME_BINDING.md
+├── CONFORMANCE_PROFILES.md
+├── LICENSE
+├── CONTRIBUTING.md
 ├── spec/
-│   └── AMCS_v1.2.1.md        # AMCS sealing protocol specification (17 sections)
+│   └── AMCS_v1.2.1.md
 ├── reference/
-│   ├── amcs.py                # Reference implementation (Python 3.11+, ~980 LOC)
-│   └── README.md              # Runtime documentation
+│   ├── amcs.py
+│   └── README.md
 ├── schemas/
-│   ├── memory_object.schema.json       # AMAS Memory Object (Section 4)
-│   ├── common.schema.json              # Shared type definitions
-│   ├── seal_receipt.schema.json        # Sealing metadata
-│   ├── prompt_log.schema.json          # Verbatim message log
-│   ├── prompt_response_map.schema.json # Causal prompt→response links
-│   ├── case_study_map.schema.json      # Node/edge relationship graph
-│   ├── cell_index.schema.json          # Per-cell library index record
-│   ├── supercell_manifest.schema.json  # Multi-cell assembly manifest
-│   └── machine_semantic_links.row.schema.json  # Machine-only analytical links
+│   ├── memory_object.schema.json
+│   ├── common.schema.json
+│   ├── seal_receipt.schema.json
+│   ├── prompt_log.schema.json
+│   ├── prompt_response_map.schema.json
+│   ├── case_study_map.schema.json
+│   ├── cell_index.schema.json
+│   ├── supercell_manifest.schema.json
+│   └── machine_semantic_links.row.schema.json
 ├── templates/
-│   └── operator_command_template.txt   # Quickstart operator commands
+│   └── operator_command_template.txt
 ├── examples/
-│   ├── conflict_tier_precedence.json   # Rule 1: tier precedence
-│   ├── conflict_injection_attempt.json # Prompt injection via authority laundering
-│   ├── conflict_same_tier.json         # Rules 2-5: same-tier resolution
-│   ├── chat_minimal.json               # Minimal chat input (JSON)
-│   └── chat_minimal.txt                # Minimal chat input (plain text)
+│   ├── conflict_tier_precedence.json
+│   ├── conflict_injection_attempt.json
+│   ├── conflict_same_tier.json
+│   ├── chat_minimal.json
+│   └── chat_minimal.txt
 └── docs/
-    ├── AUTHORITY_LAUNDERING.md         # The authority laundering concept
-    ├── THREAT_MODEL.md                 # What AMAS does and does not defend against
-    └── DESIGN_RATIONALE.md             # Why the spec is designed this way
+    ├── AUTHORITY_LAUNDERING.md
+    ├── THREAT_MODEL.md
+    └── DESIGN_RATIONALE.md
 ```
 
 ---
@@ -193,6 +192,8 @@ AMAS is distinct from these in that it addresses memory authority in AI systems 
 - [x] AMAS v1.1 specification (complete)
 - [x] AMCS reference implementation (working, v0.1.1)
 - [x] JSON schemas for Memory Objects and sealed cells
+- [x] Governance/core vs runtime-binding doctrinal split (draft)
+- [x] Conformance-profile extraction with migration path (draft)
 - [ ] Conformance test suite
 - [ ] Prompt injection resistance benchmark
 - [ ] arXiv preprint
@@ -204,9 +205,9 @@ AMAS is distinct from these in that it addresses memory authority in AI systems 
 
 If referencing this work:
 
-```
+```text
 Dougherty, J. (2026). AMAS: Authority Mapping and Arbitration System
-for Memory Governance in Large Language Models. Draft specification v1.1.
+for Memory Governance in Large Language Models. Draft specification.
 https://github.com/[repo-url]
 ```
 
