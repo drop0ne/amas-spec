@@ -1,135 +1,198 @@
 # AMAS — Authority Mapping and Arbitration System
 
-**A formal governance model for memory authority in Large Language Models.**
+**A formal governance model for contextual authority, memory authority, and bounded agent action.**
 
-Version: 2.0-draft  
+AMAS Core version: **2.0-draft**  
+AAB extension version: **0.1-draft**  
 Status: Open for review  
 Author: Jacob Dougherty  
 License: Apache 2.0
 
 ---
 
-## The Problem
+## Why AMAS Exists
 
-Large Language Models have no concept of epistemic authority.
+Large Language Models receive instructions, data, memories, retrieved documents, tool results, and model-generated inferences through the same operational context. Without a formal authority model, systems can confuse:
 
-When an LLM processes a conversation, it receives input from multiple sources: system instructions from the platform, configuration from the developer, messages from the user, results from tools, retrieved documents, and its own prior outputs. All of these compete for influence over the model's behavior — but the model has no formal mechanism for deciding which source should prevail when they conflict.
+- data with instruction
+- inference with fact
+- reachability with permission
+- capability with authority
+- successful execution with permission to broaden scope
 
-This creates three categories of failure:
+AMAS separates those concepts.
 
-**Prompt injection.** A user message or retrieved document overrides system-level safety instructions because the model cannot distinguish between authority tiers.
+The repository now has two complementary control planes:
 
-**Authority laundering.** An automated system makes consequential decisions, but because the decision was produced by an AI model acting on ambiguous instructions, no party is clearly accountable. The authority to decide was never formally delegated — it was laundered through the model's context window.
+1. **AMAS Core** — determines which contextual source is authoritative.
+2. **AAB (Agent Authority Boundary)** — determines whether a proposed real-world action is authorized.
 
-**Memory drift.** Across sessions, AI systems accumulate context from prior interactions, retrieved data, and inferred patterns. Without a formal hierarchy, an inference from three sessions ago can silently override an explicit instruction from the current operator.
+The core design goal is simple:
 
-Every major LLM provider has ad-hoc mitigations for some of these problems — role-based message channels, instruction hierarchies, safety layers. None has a formal, auditable, deterministic model for how authority flows through the context window.
-
-AMAS provides that model.
+> **No lower-authority source and no model-generated inference may silently acquire greater authority merely because the model can act on it.**
 
 ---
 
-## What AMAS Defines
+## AMAS Core: Context and Memory Authority
 
-### Governance Core
-
-AMAS establishes four tiers of memory authority, ordered by precedence:
+AMAS establishes four tiers of authority:
 
 | Tier | Name | Description |
-|------|------|-------------|
-| 0 | **CANONICAL** | Foundational rules, safety constraints, and system invariants. Immutable within a version. Cannot be overridden by any lower tier. |
-| 1 | **OPERATOR** | Developer or deployer instructions. Configures behavior within the boundaries set by Tier 0. |
-| 2 | **SESSION** | User messages, conversation history, uploaded documents, tool outputs. The runtime context of a single interaction. |
-| 3 | **INFERRED** | Conclusions drawn by the model from available context. Must be explicitly marked as inference. Lowest authority; never overrides any other tier. |
+|---|---|---|
+| 0 | **CANONICAL** | Foundational rules, safety constraints, and system invariants. |
+| 1 | **OPERATOR** | Developer/deployer instructions and configuration. |
+| 2 | **SESSION** | User messages, retrieved content, tool outputs, uploaded material, runtime context. |
+| 3 | **INFERRED** | Model-derived conclusions and speculation. Lowest authority. |
 
-The AMAS governance core also defines immutable invariants for:
-- single canonical root resolution
-- single writable truth-ledger discipline
-- explicit memory activation
-- hydrate immutability
-- provenance-gated activation
-- derived-artifact truth and read boundaries
-- repair and export discipline
-- sealed-memory durability
+Conflicts are resolved using a deterministic precedence model:
 
-### Conflict Resolution Protocol
+1. tier precedence
+2. explicit supersession
+3. recency
+4. specificity
+5. conservative default / operator resolution
 
-When memory sources conflict, AMAS applies five deterministic rules in order:
+AMAS Core also defines invariants for canonical-root uniqueness, a single writable truth ledger, explicit memory activation, provenance-gated hydration, append/repair discipline, export receipts, and sealed-memory durability.
 
-1. **Tier precedence.** Higher tier always prevails over lower tier. No exceptions.
-2. **Explicit supersession.** Within the same tier, a source that explicitly replaces a prior source prevails, provided the replacement is authorized and traceable.
-3. **Recency.** Within the same tier, absent explicit supersession, the most recent source prevails.
-4. **Specificity.** Within the same tier, same recency, the more specific source prevails over the more general.
-5. **Conservative default.** If no rule resolves the conflict, the system defaults to the more restrictive interpretation or flags the conflict for operator resolution.
-
-### Memory Object Schema
-
-Every item in the authority hierarchy is a **Memory Object** — a discrete, self-contained unit of information with attached metadata.
-
-AMAS continues to define the Memory Object model in `SPEC.md`. Runtime mechanics that operate on Memory Objects now live in `RUNTIME_BINDING.md`.
-
-### Runtime Binding and Conformance
-
-AMAS governance doctrine is distinct from runtime mechanics.
-
-- `SPEC.md` defines the immutable governance core
-- `RUNTIME_BINDING.md` defines activation, validation, append, repair, export, and state-transition mechanics
-- `CONFORMANCE_PROFILES.md` defines capability ladders and the migration path from the legacy Level 1–3 model
-
-This split prevents governance doctrine from being silently reshaped by runtime bookkeeping details.
+See [`SPEC.md`](SPEC.md).
 
 ---
 
-## Why This Matters
+## AAB: Agent Authority Boundary
 
-### For AI Safety
+The **Agent Authority Boundary** extends AMAS from memory/context governance to external action control.
 
-AMAS provides a formal model for prompt injection resistance. If a retrieved document (Tier 2) contains instructions that conflict with system safety constraints (Tier 0), the conflict resolution protocol deterministically rejects the override. No heuristics, no judgment calls — the tier hierarchy is the arbitration mechanism.
+AAB treats these as separate:
 
-### For Accountability
+- **capability**
+- **reachability**
+- **instruction**
+- **authorization**
 
-The concept of **automated authority laundering** describes a failure mode where AI systems make consequential decisions without clear authority delegation. AMAS addresses this by requiring every Memory Object to carry provenance metadata — who created it, at what tier, through what chain of authority. Decisions made through the model's context window become traceable to their authoritative source.
+A model may be capable of reaching a network service, using a credential, modifying a file, invoking a tool, or spawning another agent without being authorized to do so.
 
-See [docs/AUTHORITY_LAUNDERING.md](docs/AUTHORITY_LAUNDERING.md) for a detailed treatment of this concept.
+AAB therefore requires an external enforcement plane between the model and side effects.
 
-### For Multi-Agent Systems
-
-As AI systems increasingly operate in multi-agent architectures — where models delegate to other models, spawn sub-tasks, and aggregate results — the authority problem compounds. AMAS provides the governance layer that prevents authority from being silently escalated or diluted across agent boundaries.
-
----
-
-## Conformance Profiles
-
-AMAS v1.1 exposed three inline conformance levels. The repository is now transitioning toward a separated capability-ladder model.
-
-- Legacy inline Levels 1–3 remain summarized in `SPEC.md`
-- Forward-looking capability definitions and migration guidance live in `CONFORMANCE_PROFILES.md`
-
-This preserves continuity for existing readers while allowing the conformance doctrine to evolve independently from the governance core.
-
----
-
-## Reference Implementation
-
-This repository includes **AMCS** (Atticus Memory Cell Sealing Protocol) — a working reference implementation in Python that demonstrates AMAS principles through memory cell sealing, integrity verification, and provenance tracking.
-
-AMCS is a **reference runtime / sealing protocol** operating under AMAS governance. It is not the AMAS governance core itself.
-
-```bash
-# Seal a conversation into an immutable, hash-verified memory cell
-python3 reference/amcs.py seal --input examples/chat_minimal.json \
-    --out-dir out --cell-name DEMO_CELL
-
-# Verify cell integrity
-python3 reference/amcs.py verify --cell out/DEMO_CELL.tar.gz
-
-# Assemble multiple cells into a supercell
-python3 reference/amcs.py assemble-supercell \
-    --cells out/CELL_A.tar.gz out/CELL_B.tar.gz \
-    --out-dir out --supercell-name COMBINED --scope "project_scope"
+```text
+MODEL / AGENT
+      |
+      v
+Action Request
+      |
+      v
++-----------------------+
+| AMAS AAB POLICY GATE  |
+| external to the model |
++-----------------------+
+      |
+ ALLOW / DENY
+ ESCALATE / SIMULATE
+      |
+      v
+ Tool / Network / System
 ```
 
-See [reference/README.md](reference/README.md) for runtime documentation.
+### AAB invariants
+
+- Capability is not authority.
+- Reachability is not authorization.
+- Data is not instruction.
+- Inference is not delegation.
+- Success does not widen scope.
+- No ambient authority.
+- Delegation may narrow, never silently broaden.
+- Missing or expired authority fails closed.
+- The model is not the sole judge of its own authority.
+- Every decision produces an auditable receipt.
+
+See [`docs/AGENT_AUTHORITY_BOUNDARY.md`](docs/AGENT_AUTHORITY_BOUNDARY.md).
+
+---
+
+## Reference Enforcement Gate
+
+`reference/authority_gate.py` is a small, standard-library-only reference implementation of the AAB decision layer.
+
+It does **not** execute actions. It evaluates proposed actions against an explicit authority lease.
+
+It currently demonstrates:
+
+- deny-by-default allowlists
+- objective/operation/target scope
+- destination/network scope
+- credential scope
+- side-effect ceilings
+- expiring policy leases
+- action/network/egress/time budgets
+- delegation-depth limits
+- explicit operator escalation
+- SHA-256 policy/request receipt hashes
+
+Run the demonstration:
+
+```bash
+python3 reference/authority_gate.py \
+  --policy examples/authority_policy.json \
+  --requests examples/action_requests.json
+```
+
+Run the conformance tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The reference code is intentionally small enough to audit. Production deployments still require independent sandboxing, egress controls, least-privilege identities, secret isolation, rate limits, and immutable logging.
+
+---
+
+## AMCS Memory Runtime
+
+This repository also includes **AMCS (Atticus Memory Cell Sealing Protocol)**, a reference persistence/sealing runtime operating under AMAS governance.
+
+```bash
+python3 reference/amcs.py seal \
+  --input examples/chat_minimal.json \
+  --out-dir out \
+  --cell-name DEMO_CELL
+
+python3 reference/amcs.py verify --cell out/DEMO_CELL.tar.gz
+```
+
+AMCS and AAB solve different enforcement problems:
+
+- **AMCS** — memory provenance, sealing, integrity, rehydration.
+- **AAB** — authorization of proposed side effects.
+
+Both operate beneath AMAS governance.
+
+---
+
+## Conformance
+
+Conformance is split into independent capability axes.
+
+### Memory/runtime profiles
+
+- `C1` — read-only hydrate
+- `C2` — hydrate + validate
+- `C3` — append-capable
+- `C4` — persistent-runtime full conformance
+
+### Action-boundary profiles
+
+- `A1` — observe/simulate only
+- `A2` — scoped side-effect authority
+- `A3` — bounded delegation
+- `A4` — adversarial containment profile
+
+An implementation may declare both axes, for example:
+
+```text
+AMAS conformance: C3 / A2
+```
+
+See [`CONFORMANCE_PROFILES.md`](CONFORMANCE_PROFILES.md).
 
 ---
 
@@ -143,76 +206,104 @@ amas-spec/
 ├── CONFORMANCE_PROFILES.md
 ├── LICENSE
 ├── CONTRIBUTING.md
-├── spec/
-│   └── AMCS_v1.2.1.md
+├── docs/
+│   ├── AGENT_AUTHORITY_BOUNDARY.md
+│   ├── AUTHORITY_LAUNDERING.md
+│   ├── THREAT_MODEL.md
+│   └── DESIGN_RATIONALE.md
 ├── reference/
 │   ├── amcs.py
+│   ├── authority_gate.py
 │   └── README.md
 ├── schemas/
 │   ├── memory_object.schema.json
-│   ├── common.schema.json
-│   ├── seal_receipt.schema.json
-│   ├── prompt_log.schema.json
-│   ├── prompt_response_map.schema.json
-│   ├── case_study_map.schema.json
-│   ├── cell_index.schema.json
-│   ├── supercell_manifest.schema.json
-│   └── machine_semantic_links.row.schema.json
-├── templates/
-│   └── operator_command_template.txt
+│   ├── authority_policy.schema.json
+│   ├── action_request.schema.json
+│   ├── decision_receipt.schema.json
+│   └── ...
 ├── examples/
+│   ├── authority_policy.json
+│   ├── action_requests.json
 │   ├── conflict_tier_precedence.json
-│   ├── conflict_injection_attempt.json
-│   ├── conflict_same_tier.json
-│   ├── chat_minimal.json
-│   └── chat_minimal.txt
-└── docs/
-    ├── AUTHORITY_LAUNDERING.md
-    ├── THREAT_MODEL.md
-    └── DESIGN_RATIONALE.md
+│   └── ...
+├── tests/
+│   └── test_authority_gate.py
+└── .github/workflows/
+    └── ci.yml
 ```
 
 ---
 
-## Prior Art and Relationship to Existing Work
+## Threat Model
 
-AMAS draws on concepts from established fields while defining a novel governance model specific to AI memory:
+AMAS/AAB is designed to address or constrain:
 
-- **Role-based access control (RBAC)** in operating system security — for tier precedence design.
-- **OAuth 2.0** (RFC 6749) — for authority delegation patterns.
-- **POSIX filesystem permission hierarchies** — for layered precedence models.
-- **Prompt injection research** (Greshake et al., 2023; Perez & Ribeiro, 2022) — for threat model analysis.
+- prompt injection / tier impersonation
+- inference-to-authority promotion
+- provenance opacity
+- canonical-memory ambiguity
+- silent mutation/repair
+- target and destination scope creep
+- ambient credential use
+- privilege expansion
+- budget/rate expansion
+- unauthorized delegation
+- action laundering through tool-using agents
 
-AMAS is distinct from these in that it addresses memory authority in AI systems specifically — a problem space where no prior formal specification exists.
+It does not claim to replace infrastructure security. If the enforcement plane itself is bypassed or compromised, AMAS cannot restore the lost boundary.
+
+See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 ---
 
 ## Status and Roadmap
 
-- [x] AMAS v1.1 specification (complete)
-- [x] AMCS reference implementation (working, v0.1.1)
-- [x] JSON schemas for Memory Objects and sealed cells
-- [x] Governance/core vs runtime-binding doctrinal split (draft)
-- [x] Conformance-profile extraction with migration path (draft)
-- [ ] Conformance test suite
-- [ ] Prompt injection resistance benchmark
-- [ ] arXiv preprint
-- [ ] Multi-agent authority negotiation extension
+Completed or present in this repository:
+
+- [x] AMAS v1.1 specification lineage
+- [x] AMAS 2.0-draft governance/runtime split
+- [x] AMCS reference sealing runtime
+- [x] JSON schemas for memory artifacts
+- [x] AAB 0.1-draft action-authority extension
+- [x] AAB JSON schemas
+- [x] executable AAB policy gate
+- [x] action-boundary unit/conformance tests
+- [x] CI for reference code and JSON parse validation
+
+Next:
+
+- [ ] machine-validated JSON Schema conformance suite
+- [ ] deterministic Rule 4 specificity vectors
+- [ ] policy derivation / monotonic child-policy verifier
+- [ ] adversarial containment replay corpus
+- [ ] prompt-injection resistance benchmark
+- [ ] multi-agent authority negotiation protocol
+- [ ] signed/append-only decision receipt ledger
+- [ ] model/provider adapters
+- [ ] independent external evaluation
+- [ ] preprint/publication package
+
+---
+
+## Design Position
+
+AMAS is not a claim that a language model can be made trustworthy by instruction alone.
+
+The design assumes the opposite: a capable model may misunderstand, overgeneralize, optimize around an evaluator, follow malicious retrieved instructions, or discover capabilities that were not anticipated.
+
+The defensive boundary therefore belongs **outside the model**.
 
 ---
 
 ## Citation
 
-If referencing this work:
-
 ```text
-Dougherty, J. (2026). AMAS: Authority Mapping and Arbitration System
-for Memory Governance in Large Language Models. Draft specification.
-https://github.com/[repo-url]
+Dougherty, J. (2026). AMAS: Authority Mapping and Arbitration System.
+Draft specification and reference architecture.
 ```
 
 ---
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+Apache 2.0. See [`LICENSE`](LICENSE).

@@ -1,173 +1,47 @@
 # AMAS Runtime Binding Contract
 
-Status: Draft RC1  
-Purpose: define runtime mechanics that implement AMAS governance without changing AMAS core doctrine.
-
----
+Status: Draft RC2  
+Purpose: runtime mechanics that implement AMAS governance without changing AMAS Core doctrine.
 
 ## 1. Scope
 
-AMAS governance defines authority, canonicality, and mutation boundaries.
-This document defines the runtime mechanics that operate under those rules.
+AMAS Core defines authority, canonicality, and mutation boundaries. Runtime Binding defines activation, preflight, append, repair, export, state transitions, operator-visible verification, and the seam to the Agent Authority Boundary (AAB).
 
-This contract governs:
-- activation
-- preflight validation
-- append mechanics
-- repair mechanics
-- export mechanics
-- runtime state transitions
-- operator-visible verification surfaces
+## 2. Core/runtime separation
 
-This contract does not:
-- redefine the AMAS four-tier authority ladder
-- replace the AMAS five-rule conflict protocol
-- overwrite AMCS-specific implementation details
-- claim current implementation conformance beyond what public artifacts demonstrate
+AMAS Core decides what counts as authoritative and what must not be silently rewritten. Runtime Binding defines how those constraints are represented and verified at runtime. AAB separately governs proposed external side effects.
 
----
+## 3. Activation contract
 
-## 2. Relationship to AMAS Core
+No mutation may occur without validated activation. A valid activation contract MUST expose a canonical root identifier/hash, root-uniqueness assertion, writable-ledger identifier/path, conformance profile, append/repair flags, activation timestamp, and activation receipt hash.
 
-AMAS Core remains the authoritative governance layer.
-
-AMAS Core decides:
-- what counts as authoritative
-- what may mutate
-- what must never be silently rewritten
-- what conditions must be satisfied before mutation or export
-
-Runtime Binding decides:
-- how those rules are enforced at runtime
-- what activation payloads are required
-- what receipts and proof bundles are emitted
-- what runtime states are legal
-
----
-
-## 3. Activation Contract
-
-No mutation may occur without validated activation.
-
-### 3.1 Minimum activation fields
-
-A valid activation contract MUST expose:
-
-- `canonical_root_id` or `canonical_root_hash`
-- `root_uniqueness_asserted`
-- `writable_ledger_id` or `writable_ledger_path`
-- `conformance_profile`
-- `append_enabled`
-- `repair_enabled`
-- `activation_timestamp`
-- `activation_receipt_hash`
-
-### 3.2 Activation semantics
-
-Activation is the boundary where a read-only hydrated context becomes mutation-capable.
 If activation cannot be verified, the runtime remains non-mutating.
 
----
+## 4. Preflight
 
-## 4. Preflight Validation
+Blocking checks SHOULD include canonical-root uniqueness, writable-ledger uniqueness, chain-tip integrity, schema compatibility, and manifest/hash consistency. Advisory checks may include derived-view synchronization and quarantine candidates.
 
-Preflight must pass before append, repair, or export.
+## 5. Append
 
-### 4.1 Blocking checks
+Required sequence: stage → validate → hash → commit → regenerate derived views → emit receipt.
 
-The runtime binding should treat these as blocking checks:
+Append MUST preserve provenance and lineage. Silent mutation is forbidden.
 
-- canonical root uniqueness
-- writable truth-ledger uniqueness
-- chain-tip integrity
-- schema compatibility
-- manifest/hash consistency
+## 6. Repair
 
-### 4.2 Advisory checks
+Repair is privileged. Allowed classes include wrapper regeneration, derived-ledger rebuild, provenance-preserving chain-tip correction, and migration. Silent repair is forbidden and every repair requires a receipt.
 
-The runtime binding may surface these as advisory:
+## 7. Invalid memory
 
-- wrapper sync status
-- derived view sync status
-- quarantine candidates present
+Invalid or unprovenanced memory does not activate. Quarantine/review workflows are optional; activation of invalid memory is not.
 
----
+## 8. Export proof bundle
 
-## 5. Append Protocol
+No authoritative export should proceed without conformance validation. A proof bundle SHOULD expose conformance profile, chain-tip hash, ledger digest, export timestamp, export receipt hash, and operator-visible state hash.
 
-Append operations extend state without rewriting prior authoritative state.
+## 9. Runtime states
 
-### 5.1 Required sequence
-
-1. stage
-2. validate
-3. hash
-4. commit
-5. regenerate derived views
-6. emit receipt
-
-### 5.2 Append invariants
-
-- provenance must be preserved
-- lineage must be preserved
-- silent mutation is forbidden
-
----
-
-## 6. Repair Protocol
-
-Repair is a privileged operation because it can alter the operational representation of state.
-
-### 6.1 Allowed repair classes
-
-- wrapper regeneration
-- derived ledger rebuild
-- chain-tip correction with provenance
-- migration with preserved provenance
-
-### 6.2 Repair restrictions
-
-- silent repair is forbidden
-- silent chain-tip replacement is forbidden
-- all repairs require receipts
-
----
-
-## 7. Invalid Cell Handling
-
-Invalid or unprovenanced memory does not activate under AMAS Core.
-
-The runtime binding may additionally support:
-- quarantine of invalid cells
-- quarantine review workflows
-
-Quarantine support is optional.
-Activation of invalid cells is not allowed.
-
----
-
-## 8. Export Proof Bundle
-
-No export should proceed without conformance validation.
-
-### 8.1 Minimum proof bundle
-
-A runtime binding should expose:
-
-- conformance profile
-- chain-tip hash
-- ledger digest
-- export timestamp
-- export receipt hash
-- operator-visible state hash
-
-This bundle allows the operator to inspect what was exported and under which state.
-
----
-
-## 9. Runtime State Machine
-
-The runtime binding defines the following states:
+Suggested states:
 
 - `READ_ONLY_HYDRATE`
 - `VALIDATING`
@@ -178,39 +52,37 @@ The runtime binding defines the following states:
 - `CLOSED_FINALIZED`
 - `BLOCKED`
 
-### 9.1 Terminal states
+`CLOSED_FINALIZED` and `BLOCKED` are terminal.
 
-- `CLOSED_FINALIZED`
-- `BLOCKED`
+## 10. Operator-visible verification
 
-A finalized state prevents ambiguous late-lifecycle mutation or re-export behavior.
+The runtime MUST expose reviewable verification surfaces appropriate to its declared profile: activation receipt, ledger digest, export receipt, state hash, and where AAB is active, action-decision receipts.
 
----
+## 11. Agent Authority Boundary seam
 
-## 10. Operator-Visible Verification Seam
+A runtime that exposes tools or external side effects and declares an A-axis profile MUST route proposed side effects through an enforcement component external to the acting model.
 
-The runtime binding must expose a reviewable verification seam to the operator.
+The minimum request/decision flow is:
 
-Recommended verification surfaces:
-- activation receipt
-- ledger digest
-- export receipt
-- operator-visible state hash
+1. model/agent proposes structured action
+2. runtime binds request to the active authority lease
+3. AAB validates policy freshness and scope
+4. AAB returns `ALLOW`, `DENY`, `ESCALATE`, or `SIMULATE`
+5. only `ALLOW` reaches the real side-effecting tool path
+6. decision receipt is persisted or exposed to the operator
 
-This prevents runtime bookkeeping from becoming invisible authority.
+`SIMULATE` may reach a non-side-effecting simulation environment only. `ESCALATE` is not authorization.
 
----
+The acting model MUST NOT be able to mutate its own authority lease through ordinary tool output or model-generated inference.
 
-## 11. Relationship to AMCS
+## 12. Fail-closed behavior
 
-AMCS is a reference runtime and sealing protocol operating under AMAS governance.
+For A-axis runtimes, missing policy, malformed request, expired lease, unknown credential, exceeded hard budget, or unverifiable principal binding MUST NOT default to execution.
 
-Where AMCS provides implementation-specific mechanics, those remain implementation-specific.
-Where AMAS Runtime Binding defines generalized runtime doctrine, future AMCS revisions should align where applicable.
+## 13. Relationship to AMCS
 
----
+AMCS remains a reference sealing/persistence protocol. AAB is a separate reference enforcement surface. Implementations may use either or both under AMAS Core governance.
 
-## 12. Status
+## 14. Status
 
-This document is a doctrine artifact.
-It is not, by itself, a claim that current public implementations already satisfy every runtime-binding rule defined here.
+This document is doctrine. Reference implementations demonstrate selected mechanics but do not, by themselves, establish production conformance or frontier-model containment.

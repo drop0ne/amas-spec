@@ -2,112 +2,82 @@
 
 ## Scope
 
-This document identifies the threats that AMAS is designed to mitigate, the threats it partially addresses, and the threats that fall outside its scope.
+This document identifies threats AMAS Core, Runtime Binding, AMCS, and the Agent Authority Boundary (AAB) are designed to mitigate or constrain. AMAS is a governance and enforcement architecture, not a replacement for infrastructure security.
 
----
+## Context and memory threats
 
-## Threats AMAS Mitigates
+### T1 — Tier impersonation / prompt injection
+Low-authority content impersonates a higher-authority source. Authority is assigned from source identity and ingestion metadata, not persuasive wording. Residual risk: source misclassification or compromised high-authority channels.
 
-### T1: Tier Impersonation (Prompt Injection)
+### T2 — Implicit inference escalation
+Model-generated inference is treated as established authority. Tier 3 requires explicit inference marking and cannot silently promote itself.
 
-**Description.** A low-tier source (Tier 2 or 3) includes language that impersonates a higher-tier source.
+### T3 — Provenance opacity / authority laundering
+A consequential decision cannot be traced to an authorized source. AMAS requires provenance and makes tier transitions explicit.
 
-**AMAS mitigation.** Authority tier is assigned at ingestion based on source identity, not content. Rule 1 rejects any attempt by a lower tier to override a higher tier.
+### T4 — Canonical-root ambiguity
+Multiple artifacts are treated as canonical. Core doctrine requires exactly one canonical root proven unique before hydrate completes.
 
-**Residual risk.** If the ingestion layer misclassifies a source's tier, the entire model is compromised.
+### T5 — Writable truth-source drift
+Multiple writable truth surfaces emerge. Core doctrine permits exactly one writable truth ledger for an active context.
 
-### T2: Implicit Authority Escalation
+### T6 — Silent repair or mutation
+Infrastructure rewrites authoritative state without explicit receipt. Silent repair and silent chain-tip replacement are forbidden.
 
-**Description.** An inference (Tier 3) is treated as established fact (Tier 2 or higher) without explicit escalation.
+### T7 — Derived artifacts gating reads
+Indexes, manifests, summaries, or rollups become de facto canon. Derived artifacts may summarize truth but must not define truth or gate canonical reads.
 
-**AMAS mitigation.** All Tier 3 content must carry `inference_marker: true`. Escalation requires explicit action by an authorized agent.
+### T8 — Receipt replay
+A valid but stale activation/export artifact is reused against newer state. Runtime bindings should verify freshness and state hashes.
 
-**Residual risk.** If middleware fails to tag model-generated content, the inference boundary becomes invisible.
+## Agent action threats
 
-### T3: Provenance Opacity
+### T9 — Target substitution
+An agent replaces the authorized target with another target that appears useful for the objective. AAB requires explicit target scope; useful is not equivalent to authorized.
 
-**Description.** A decision is made through the model but no one can trace which sources contributed to it or at what authority level.
+### T10 — Destination / network expansion
+The agent discovers a reachable host, service, registry, API, or route and treats discovery as permission. AAB separates reachability from authorization and denies unlisted destinations.
 
-**AMAS mitigation.** Every Memory Object carries provenance metadata. Conflict resolution events may produce audit records. The AMCS reference implementation enforces provenance on every derived artifact.
+### T11 — Ambient credential use
+The agent discovers or inherits credentials that were not delegated for the action. AAB requires explicit credential references; unlisted credentials fail closed.
 
-**Residual risk.** Implementations that cut corners on provenance reduce auditability without obvious immediate failure.
+### T12 — Privilege or side-effect expansion
+The agent moves from observation/simulation to persistent or privileged changes. AAB enforces an ordered side-effect ceiling outside the model.
 
-### T4: Canonical Root Ambiguity
+### T13 — Budget and rate expansion
+The agent continues acting because intermediate steps succeed. AAB binds cumulative action, network, egress, and wall-clock budgets to the authority lease.
 
-**Description.** Multiple artifacts are treated as if each were the canonical root for the same active context.
+### T14 — Unauthorized delegation / sub-agent spawning
+An agent delegates to another agent to obtain a broader effective capability. AAB requires monotonic delegation: child authority cannot exceed parent authority.
 
-**AMAS mitigation.** Core doctrine requires exactly one canonical root, proven unique before hydrate completes.
+### T15 — Action laundering
+Model-generated rationale is treated as authorization for a side effect. AAB requires authorization to derive from the external lease, not the model's explanation.
 
-**Residual risk.** If runtime binding does not actually verify uniqueness, the doctrine can be bypassed in practice.
+### T16 — Success-derived authority
+A successful unauthorized or unexpected intermediate action is treated as permission to continue. AAB explicitly forbids success from widening scope.
 
-### T5: Writable Truth-Source Drift
+## Partially addressed
 
-**Description.** Multiple writable surfaces exist and operators cannot tell which ledger is authoritative.
+### T17 — Multi-agent authority dilution
+AAB defines monotonic delegation rules, but the repository does not yet provide a complete inter-agent negotiation protocol or production-grade child-policy verifier.
 
-**AMAS mitigation.** Core doctrine requires exactly one writable truth ledger.
+### T18 — Stale authority
+Policy expiration constrains stale leases, but determining when real-world circumstances invalidate an otherwise unexpired grant remains deployment-specific.
 
-**Residual risk.** If derived artifacts are allowed to behave like writable peers, the drift reappears operationally.
+### T19 — Compromised enforcement plane
+If the tool broker, policy service, sandbox boundary, credential broker, or other enforcement plane is bypassed or compromised, the model may act outside AMAS. Defense requires conventional security controls and independent monitoring.
 
-### T6: Silent Repair
+## Outside scope / complementary controls required
 
-**Description.** Runtime infrastructure silently rewrites state, wrappers, or chain tips without an explicit repair receipt.
+- compromised Tier 0/platform channel
+- malicious actors who legitimately hold sufficient authority
+- model-weight or training-data compromise
+- hardware/firmware compromise
+- side channels outside the instrumented action path
+- vulnerabilities in enforcement components themselves
 
-**AMAS mitigation.** Silent repair is forbidden. All repairs require receipts.
+Production deployments should combine AMAS/AAB with least privilege, process isolation, network egress filtering, secret isolation, immutable/tamper-evident logs, independent monitoring, and incident response.
 
-**Residual risk.** Authorized bad-faith actors or compromised runtimes can still falsify repairs unless the operator-visible verification seam is actually inspected.
+## Evidence discipline
 
-### T7: Derived Artifacts Gating Reads
-
-**Description.** A manifest, wrapper, or index becomes the practical gatekeeper of access to canon, even though it is only a derived view.
-
-**AMAS mitigation.** Derived artifacts may summarize truth but may not define truth or gate reads.
-
-**Residual risk.** Convenience layers can reintroduce read-gating by implementation if left unaudited.
-
-### T8: Replay Risk on Activation or Export Receipts
-
-**Description.** A valid but stale activation/export artifact is replayed against newer runtime state.
-
-**AMAS mitigation.** Runtime binding requires timestamped receipts and operator-visible state hashes.
-
-**Residual risk.** Replay remains possible if freshness checks are not enforced by the runtime.
-
----
-
-## Threats AMAS Partially Addresses
-
-### T9: Multi-Agent Authority Dilution
-
-**Description.** In multi-agent systems, authority degrades as outputs pass from agent to agent.
-
-**AMAS partial mitigation.** If both agents implement AMAS, metadata can propagate.
-
-**Gap.** AMAS does not yet define a full inter-agent authority negotiation protocol.
-
-### T10: Stale Authority
-
-**Description.** A Memory Object was valid when created but circumstances changed.
-
-**AMAS partial mitigation.** `expires_at` and explicit supersession support time-bounded authority.
-
-**Gap.** AMAS does not automatically detect staleness.
-
----
-
-## Threats Outside AMAS Scope
-
-### T11: Compromised Tier 0 Channel
-
-If the infrastructure delivering Tier 0 is compromised, AMAS provides no defense.
-
-### T12: Authorized Malicious Agents
-
-An agent with legitimate Tier 1 authority who intentionally creates harmful instructions remains within the formal AMAS structure.
-
-### T13: Memory Object Boundary Errors
-
-If the system incorrectly defines object boundaries, conflict resolution may still produce incorrect results.
-
-### T14: Side-Channel Attacks
-
-AMAS does not address attacks that bypass the context window entirely — model weight manipulation, training-data poisoning, or hardware-level exploits.
+The existence of AAB documentation or reference code is not evidence that a deployment contains a frontier agent. Containment claims require architecture-specific adversarial testing and reproducible results.

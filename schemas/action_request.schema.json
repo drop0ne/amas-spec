@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/action_request.json",
+  "title": "AMAS AAB Action Request",
+  "type": "object",
+  "required": ["request_id", "principal", "objective_id", "operation", "target", "side_effect", "usage", "timestamp"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "principal": {"type": "string", "minLength": 1},
+    "objective_id": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "target": {"type": "string", "minLength": 1},
+    "destination": {"type": ["string", "null"]},
+    "credential_ref": {"type": ["string", "null"]},
+    "side_effect": {"enum": ["observe", "simulate", "reversible_write", "persistent_write", "privileged_change"]},
+    "usage": {
+      "type": "object",
+      "required": ["actions", "network_calls", "egress_bytes", "wall_clock_seconds"],
+      "properties": {
+        "actions": {"type": "integer", "minimum": 0},
+        "network_calls": {"type": "integer", "minimum": 0},
+        "egress_bytes": {"type": "integer", "minimum": 0},
+        "wall_clock_seconds": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "delegation_depth": {"type": "integer", "minimum": 0, "default": 0},
+    "timestamp": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

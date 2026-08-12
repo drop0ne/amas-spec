@@ -1,0 +1,41 @@
+[
+  {
+    "request_id": "REQ-ALLOW-001",
+    "principal": "research-agent",
+    "objective_id": "evaluate-contained-target",
+    "operation": "read",
+    "target": "sandbox://target-a",
+    "destination": "sandbox://target-a",
+    "credential_ref": null,
+    "side_effect": "observe",
+    "usage": {"actions": 1, "network_calls": 1, "egress_bytes": 100, "wall_clock_seconds": 2},
+    "delegation_depth": 0,
+    "timestamp": "2026-08-12T18:00:00Z"
+  },
+  {
+    "request_id": "REQ-SCOPE-ESCALATE-001",
+    "principal": "research-agent",
+    "objective_id": "evaluate-contained-target",
+    "operation": "read",
+    "target": "external://unlisted-target",
+    "destination": "external://unlisted-target",
+    "credential_ref": null,
+    "side_effect": "observe",
+    "usage": {"actions": 2, "network_calls": 2, "egress_bytes": 100, "wall_clock_seconds": 4},
+    "delegation_depth": 0,
+    "timestamp": "2026-08-12T18:00:01Z"
+  },
+  {
+    "request_id": "REQ-PRIV-DENY-001",
+    "principal": "research-agent",
+    "objective_id": "evaluate-contained-target",
+    "operation": "analyze",
+    "target": "sandbox://target-a",
+    "destination": "sandbox://target-a",
+    "credential_ref": "ambient-admin-token",
+    "side_effect": "privileged_change",
+    "usage": {"actions": 3, "network_calls": 2, "egress_bytes": 100, "wall_clock_seconds": 5},
+    "delegation_depth": 0,
+    "timestamp": "2026-08-12T18:00:02Z"
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/decision_receipt.json",
+  "title": "AMAS AAB Decision Receipt",
+  "type": "object",
+  "required": ["request_id", "policy_id", "decision", "reason", "evaluated_at", "policy_hash", "request_hash"],
+  "properties": {
+    "request_id": {"type": "string"},
+    "policy_id": {"type": "string"},
+    "decision": {"enum": ["ALLOW", "DENY", "ESCALATE", "SIMULATE"]},
+    "reason": {"type": "string"},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "policy_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}
