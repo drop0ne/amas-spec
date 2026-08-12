@@ -1,0 +1,82 @@
+[
+  {
+    "id": "BT01-clean-single-path",
+    "expected_valid": true,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","tool":"adapter","sink":"side_effect"},
+      "edges": [["agent","broker"],["broker","tool"],["tool","sink"]]
+    }
+  },
+  {
+    "id": "BT02-direct-agent-bypass",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","tool":"adapter","sink":"side_effect"},
+      "edges": [["agent","broker"],["broker","tool"],["tool","sink"],["agent","sink"]]
+    }
+  },
+  {
+    "id": "BT03-alternate-adapter-bypass",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","safe_tool":"adapter","raw_tool":"adapter","sink":"side_effect"},
+      "edges": [["agent","broker"],["broker","safe_tool"],["safe_tool","sink"],["agent","raw_tool"],["raw_tool","sink"]]
+    }
+  },
+  {
+    "id": "BT04-indirect-proxy-bypass",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","tool":"adapter","proxy":"proxy","sink":"side_effect"},
+      "edges": [["agent","broker"],["broker","tool"],["tool","sink"],["agent","proxy"],["proxy","sink"]]
+    }
+  },
+  {
+    "id": "BT05-multiple-agents-all-mediated",
+    "expected_valid": true,
+    "graph": {
+      "nodes": {"agent_a":"agent","agent_b":"agent","broker":"broker","tool":"adapter","sink":"side_effect"},
+      "edges": [["agent_a","broker"],["agent_b","broker"],["broker","tool"],["tool","sink"]]
+    }
+  },
+  {
+    "id": "BT06-second-agent-bypass",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent_a":"agent","agent_b":"agent","broker":"broker","tool":"adapter","sink":"side_effect"},
+      "edges": [["agent_a","broker"],["agent_b","broker"],["broker","tool"],["tool","sink"],["agent_b","sink"]]
+    }
+  },
+  {
+    "id": "BT07-broker-after-effect-does-not-count",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent":"agent","sink":"side_effect","broker":"broker"},
+      "edges": [["agent","sink"],["sink","broker"]]
+    }
+  },
+  {
+    "id": "BT08-cycle-after-mediated-path",
+    "expected_valid": true,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","proxy":"proxy","tool":"adapter","sink":"side_effect"},
+      "edges": [["agent","broker"],["broker","proxy"],["proxy","tool"],["tool","proxy"],["tool","sink"]]
+    }
+  },
+  {
+    "id": "BT09-unreachable-side-effect-is-not-functional-proof",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","observer":"observer","sink":"side_effect"},
+      "edges": [["agent","broker"],["broker","observer"]]
+    }
+  },
+  {
+    "id": "BT10-two-sinks-one-bypassed",
+    "expected_valid": false,
+    "graph": {
+      "nodes": {"agent":"agent","broker":"broker","tool_a":"adapter","tool_b":"adapter","sink_a":"side_effect","sink_b":"side_effect"},
+      "edges": [["agent","broker"],["broker","tool_a"],["tool_a","sink_a"],["agent","tool_b"],["tool_b","sink_b"]]
+    }
+  }
+]
