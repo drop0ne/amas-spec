@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from authority_gate import evaluate, parse_time
-from receipt_chain import append_receipt, verify_chain
+from receipt_chain import GENESIS, append_receipt, verify_chain
 
 USAGE_KEYS = ("actions", "network_calls", "egress_bytes", "wall_clock_seconds")
 
@@ -102,6 +102,12 @@ class EnforcementBroker:
         self.last_sequence = 0
         self.receipts: list[dict[str, Any]] = []
 
+    def _chain(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        previous = self.receipts[-1]["receipt_hash"] if self.receipts else GENESIS
+        chained = append_receipt(receipt, previous_hash=previous, sequence=len(self.receipts))
+        self.receipts.append(chained)
+        return chained
+
     def _reject(self, request: dict[str, Any], reason: str, now: datetime) -> dict[str, Any]:
         receipt = {
             "request_id": request.get("request_id", "UNKNOWN"),
@@ -114,9 +120,7 @@ class EnforcementBroker:
             "lease_id": self.lease["lease_id"],
             "authoritative_usage": dict(self.usage),
         }
-        chained = append_receipt(self.receipts, receipt)
-        self.receipts.append(chained)
-        return chained
+        return self._chain(receipt)
 
     def authorize(self, request: dict[str, Any], *, cost: dict[str, int], now: datetime | None = None) -> dict[str, Any]:
         """Evaluate one request using broker-owned mutable security state."""
@@ -176,17 +180,19 @@ class EnforcementBroker:
                 self.usage["actions"] += delta["actions"]
                 receipt["authoritative_usage"] = dict(self.usage)
 
-            chained = append_receipt(self.receipts, receipt)
-            self.receipts.append(chained)
-            return chained
+            return self._chain(receipt)
 
         except (KeyError, TypeError, ValueError) as exc:
             return self._reject(request, f"invalid_envelope:{type(exc).__name__}", now)
 
     def verify_receipts(self) -> bool:
+        return bool(verify_chain(self.receipts)["valid"])
+
+    def receipt_verification(self) -> dict[str, Any]:
         return verify_chain(self.receipts)
 
     def snapshot(self) -> dict[str, Any]:
+        verification = self.receipt_verification()
         return {
             "lease_id": self.lease["lease_id"],
             "policy_id": self.policy.get("policy_id"),
@@ -194,5 +200,6 @@ class EnforcementBroker:
             "usage": dict(self.usage),
             "seen_nonce_count": len(self.seen_nonces),
             "receipt_count": len(self.receipts),
-            "receipt_chain_valid": self.verify_receipts(),
+            "receipt_chain_valid": verification["valid"],
+            "receipt_chain_tip": verification["chain_tip"],
         }
