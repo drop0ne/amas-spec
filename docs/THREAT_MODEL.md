@@ -48,7 +48,7 @@ The agent moves from observation/simulation to persistent or privileged changes.
 The agent continues acting because intermediate steps succeed. AAB binds cumulative action, network, egress, and wall-clock budgets to the authority lease.
 
 ### T14 — Unauthorized delegation / sub-agent spawning
-An agent delegates to another agent to obtain a broader effective capability. AAB requires monotonic delegation: child authority cannot exceed parent authority.
+An agent delegates to another agent to obtain a broader effective capability. AAB requires monotonic delegation: child authority cannot exceed parent authority. The reference verifier/deriver rejects child-policy widening across the defined authority dimensions.
 
 ### T15 — Action laundering
 Model-generated rationale is treated as authorization for a side effect. AAB requires authorization to derive from the external lease, not the model's explanation.
@@ -56,16 +56,48 @@ Model-generated rationale is treated as authorization for a side effect. AAB req
 ### T16 — Success-derived authority
 A successful unauthorized or unexpected intermediate action is treated as permission to continue. AAB explicitly forbids success from widening scope.
 
+## Enforcement-path threats
+
+### T17 — Authority-lease tampering
+An agent or intermediary edits targets, credentials, budgets, side-effect ceilings, or expiry after authority was granted. AAB 0.3 introduces authenticated lease envelopes. Any modification to a signed lease invalidates the reference signature.
+
+Residual risk: the reference HMAC mechanism uses symmetric material. Production systems should keep signing authority outside the model environment and choose a deployment-appropriate authentication mechanism.
+
+### T18 — Action-request replay
+A previously valid request is submitted again to repeat a side effect. AAB 0.3 binds requests to unique nonces, monotonic request sequences, and freshness windows.
+
+Residual risk: replay state must survive broker restart when durable replay protection is required.
+
+### T19 — Agent-supplied budget spoofing
+The agent reports lower cumulative usage to regain action, network, egress, or time budget. AAB 0.3 moves enforcement-critical cumulative usage to broker-owned state and overwrites agent-supplied counters before policy evaluation.
+
+Residual risk: the broker/tool adapter must measure or conservatively reserve action cost. Agent-controlled cost declarations are not sufficient.
+
+### T20 — Stale or future-dated request acceptance
+The agent reuses an old envelope or manipulates time metadata. AAB 0.3 rejects requests outside the configured freshness window and materially future-dated requests.
+
+Residual risk: broker clock integrity remains an infrastructure dependency.
+
+### T21 — Authorization-log mutation or reordering
+An attacker edits or reorders decision records to obscure what the enforcement plane allowed or denied. AAB receipt chaining detects mutation and reordering within an observed chain.
+
+Residual risk: hash chaining alone does not prevent full-chain truncation. Production deployments should independently anchor chain tips or use a durable append-only/signed store.
+
+### T22 — Enforcement-path bypass
+The agent reaches a tool, credential, network interface, subprocess, or service through a second path that does not traverse AAB.
+
+AAB cannot solve this in policy code alone. Strong containment requires architecture-level mediation so all relevant side effects traverse the broker or an equivalent enforcement point, combined with OS/process isolation, egress controls, least-privilege credentials, and monitoring.
+
 ## Partially addressed
 
-### T17 — Multi-agent authority dilution
-AAB defines monotonic delegation rules, but the repository does not yet provide a complete inter-agent negotiation protocol or production-grade child-policy verifier.
+### T23 — Multi-agent authority negotiation
+AAB now provides monotonic parent-to-child policy verification and derivation, but it does not yet define a complete distributed negotiation protocol covering mutually distrustful agents, revocation propagation, partial failures, or cross-provider identity.
 
-### T18 — Stale authority
-Policy expiration constrains stale leases, but determining when real-world circumstances invalidate an otherwise unexpired grant remains deployment-specific.
+### T24 — Stale authority due to changing real-world conditions
+Policy expiration constrains stale leases, but determining when circumstances invalidate an otherwise unexpired grant remains deployment-specific.
 
-### T19 — Compromised enforcement plane
-If the tool broker, policy service, sandbox boundary, credential broker, or other enforcement plane is bypassed or compromised, the model may act outside AMAS. Defense requires conventional security controls and independent monitoring.
+### T25 — Compromised enforcement plane
+If the tool broker, policy service, sandbox boundary, credential broker, signing service, or other enforcement component is compromised, the model may act outside AMAS. Defense requires conventional security controls and independent monitoring.
 
 ## Outside scope / complementary controls required
 
@@ -75,9 +107,10 @@ If the tool broker, policy service, sandbox boundary, credential broker, or othe
 - hardware/firmware compromise
 - side channels outside the instrumented action path
 - vulnerabilities in enforcement components themselves
+- physical effects that cannot be observed or mediated by the deployment
 
-Production deployments should combine AMAS/AAB with least privilege, process isolation, network egress filtering, secret isolation, immutable/tamper-evident logs, independent monitoring, and incident response.
+Production deployments should combine AMAS/AAB with least privilege, process isolation, network egress filtering, secret isolation, durable replay state, immutable/tamper-evident logs, independent monitoring, and incident response.
 
 ## Evidence discipline
 
-The existence of AAB documentation or reference code is not evidence that a deployment contains a frontier agent. Containment claims require architecture-specific adversarial testing and reproducible results.
+The existence of AAB documentation or reference code is not evidence that a deployment contains a frontier agent. Containment claims require architecture-specific adversarial testing, evidence that the agent cannot bypass the enforcement path being evaluated, and reproducible results.

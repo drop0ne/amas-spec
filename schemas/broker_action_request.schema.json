@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/broker_action_request.json",
+  "title": "AMAS AAB Broker Action Request",
+  "type": "object",
+  "required": [
+    "request_id",
+    "lease_id",
+    "nonce",
+    "sequence",
+    "principal",
+    "objective_id",
+    "operation",
+    "target",
+    "side_effect",
+    "timestamp"
+  ],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "lease_id": {"type": "string", "minLength": 1},
+    "nonce": {"type": "string", "minLength": 16},
+    "sequence": {"type": "integer", "minimum": 1},
+    "principal": {"type": "string", "minLength": 1},
+    "objective_id": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "target": {"type": "string", "minLength": 1},
+    "destination": {"type": ["string", "null"]},
+    "credential_ref": {"type": ["string", "null"]},
+    "side_effect": {"enum": ["observe", "simulate", "reversible_write", "persistent_write", "privileged_change"]},
+    "delegation_depth": {"type": "integer", "minimum": 0, "default": 0},
+    "timestamp": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}
