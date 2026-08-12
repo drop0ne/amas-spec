@@ -3,7 +3,7 @@
 **A formal governance model for contextual authority, memory authority, and bounded agent action.**
 
 AMAS Core version: **2.0-draft**  
-AAB extension version: **0.3-draft**  
+AAB extension version: **0.4-draft**  
 Status: Open for review  
 Author: Jacob Dougherty  
 License: Apache 2.0
@@ -12,37 +12,37 @@ License: Apache 2.0
 
 ## Why AMAS Exists
 
-Large Language Models receive instructions, data, memories, retrieved documents, tool results, and model-generated inferences through the same operational context. Tool-using agents add a second problem: a model may discover that it *can* perform an action and incorrectly treat that capability as permission.
+LLM systems combine instructions, retrieved data, memory, tool results, and model-generated inference inside one operational context. Tool-using agents add a second failure mode: a model may discover that it **can** perform an action and incorrectly treat capability or reachability as permission.
 
 AMAS separates:
 
 - data from instruction
 - inference from fact
-- reachability from permission
+- reachability from authorization
 - capability from authority
-- successful execution from permission to broaden scope
+- successful execution from permission to widen scope
 
 The repository contains two complementary control planes:
 
-1. **AMAS Core** — determines which contextual source is authoritative.
-2. **AAB (Agent Authority Boundary)** — determines whether a proposed external action is authorized and whether the enforcement state used to decide that question is trustworthy.
+1. **AMAS Core** — contextual and memory authority.
+2. **AAB (Agent Authority Boundary)** — external action authority and enforcement-path integrity.
 
-> **No lower-authority source, model-generated inference, newly discovered capability, or successful action may silently acquire greater authority.**
+> **No lower-authority source, inference, newly discovered capability, or successful action may silently acquire greater authority.**
 
 ---
 
-## AMAS Core: Context and Memory Authority
+## AMAS Core
 
 AMAS defines four contextual authority tiers:
 
 | Tier | Name | Description |
 |---|---|---|
-| 0 | **CANONICAL** | Foundational rules, safety constraints, and system invariants. |
+| 0 | **CANONICAL** | Foundational constraints and system invariants. |
 | 1 | **OPERATOR** | Developer/deployer instructions and configuration. |
-| 2 | **SESSION** | User messages, retrieved content, tool outputs, uploads, and runtime context. |
-| 3 | **INFERRED** | Model-derived conclusions and speculation. Lowest authority. |
+| 2 | **SESSION** | User input, retrieved content, tool outputs, uploads, runtime context. |
+| 3 | **INFERRED** | Model-derived conclusions. Lowest authority. |
 
-Conflicts are resolved through:
+Conflict resolution applies, in order:
 
 1. tier precedence
 2. explicit supersession
@@ -50,17 +50,15 @@ Conflicts are resolved through:
 4. specificity
 5. conservative default / operator resolution
 
-AMAS Core also defines canonical-root uniqueness, a single writable truth ledger, explicit memory activation, provenance-gated hydration, append/repair discipline, export receipts, and sealed-memory durability.
+AMAS Core also defines canonical-root uniqueness, single writable truth-ledger discipline, explicit memory activation, provenance-gated hydration, mutation/repair controls, export receipts, and sealed-memory durability.
 
 See [`SPEC.md`](SPEC.md), [`RUNTIME_BINDING.md`](RUNTIME_BINDING.md), and [`CONFORMANCE_PROFILES.md`](CONFORMANCE_PROFILES.md).
 
 ---
 
-## AAB: Agent Authority Boundary
+## AAB — Agent Authority Boundary
 
-AAB extends AMAS from memory/context governance to external action control.
-
-AAB requires an enforcement plane outside the acting model:
+AAB requires an enforcement boundary external to the acting model.
 
 ```text
 MODEL / AGENT
@@ -69,20 +67,28 @@ MODEL / AGENT
 Structured Action Request
       |
       v
-+-----------------------------+
-| AMAS AAB ENFORCEMENT BROKER |
-| signed lease                |
-| replay state                |
-| trusted usage counters      |
-| policy gate                 |
-| receipt chain               |
-+-----------------------------+
-      |
- ALLOW / DENY / ESCALATE
-      |
-      v
- Tool Adapter / Side Effect
++------------------------------+
+| durable AAB enforcement      |
+| - signed authority lease     |
+| - nonce / sequence state     |
+| - broker-owned counters      |
+| - AAB policy gate            |
+| - persisted receipt chain    |
+| - rollback checkpoint check  |
++---------------+--------------+
+                |
+        ALLOW / DENY
+                |
+                v
+          Tool Adapter
+                |
+                v
+        Side-Effect Sink
+
+Independent checkpoint anchor <--- state hash / receipt-chain tip
 ```
+
+A strong deployment must also establish that the model has no alternate route to an equivalent side effect that avoids this broker.
 
 ### Core AAB invariants
 
@@ -93,77 +99,92 @@ Structured Action Request
 - Success does not widen scope.
 - No ambient credentials or privileges.
 - Delegation may narrow but never silently broaden.
-- Missing, expired, stale, replayed, or unverifiable authority fails closed.
-- The model is not the sole judge of its own authority.
-- Enforcement-critical counters are broker-owned, not agent-owned.
-- Every authorization decision is auditable.
-- Higher containment claims require evidence, not assertion.
+- Missing, expired, stale, replayed, unverifiable, or non-durable authority fails closed.
+- The model is not the sole judge of its own authorization.
+- Enforcement counters and replay state are broker-owned.
+- Broker restart must not reset authority state.
+- Older authenticated broker state must be detectable through independent checkpointing for higher assurance.
+- Every modeled agent→side-effect path must cross the enforcement boundary.
+- Higher containment claims require reproducible evidence.
 
 See [`docs/AGENT_AUTHORITY_BOUNDARY.md`](docs/AGENT_AUTHORITY_BOUNDARY.md).
 
 ---
 
-## Reference Implementations
+## Reference Components
 
-### Policy gate
+### `reference/authority_gate.py`
 
-`reference/authority_gate.py` evaluates structured requests against an explicit authority policy. It never executes requested actions.
+Deny-by-default policy evaluation for:
 
-It demonstrates:
-
-- deny-by-default allowlists
-- objective/operation/target scope
+- objective / operation / target scope
 - destination/network scope
 - credential scope
 - side-effect ceilings
-- expiring policies
+- policy expiry
 - action/network/egress/time budgets
 - delegation-depth limits
-- operator escalation
-- policy/request receipt hashes
+- explicit operator escalation
 
-### Monotonic delegation
+The gate evaluates requests; it does not execute them.
 
-`reference/delegation.py` verifies that child authority is a subset of parent authority across objectives, operations, targets, destinations, credentials, side-effect ceilings, budgets, expiration, and delegation depth.
+### `reference/enforcement_broker.py` — AAB 0.3
 
-### Receipt chaining
+Moves enforcement-critical state outside the acting model:
 
-`reference/receipt_chain.py` creates and verifies SHA-256-linked authorization receipts. It detects mutation and reordering within an observed chain. Production deployments should independently anchor chain tips to address truncation risk.
-
-### Enforcement broker — AAB 0.3
-
-`reference/enforcement_broker.py` adds enforcement-path state that the acting model cannot self-report:
-
-- authenticated/signed authority leases
+- authenticated reference authority leases
 - lease binding
-- nonce replay detection
-- monotonic request sequences
+- nonce replay protection
+- monotonic request sequence
 - request freshness checks
-- broker-owned cumulative usage counters
-- broker-bound action cost
+- broker-owned cumulative budgets
+- broker-bound trusted action cost
 - chained decision receipts
 
-The reference uses HMAC-SHA256 for compact demonstration. Production systems should keep signing authority outside the model environment and use deployment-appropriate workload identity or key management.
+### `reference/durable_broker.py` — AAB 0.4
 
-Run the existing policy-gate demonstration:
+Adds authenticated durable security state:
 
-```bash
-python3 reference/authority_gate.py \
-  --policy examples/authority_policy.json \
-  --requests examples/action_requests.json
-```
+- persisted usage/replay/sequence state
+- persisted receipt chain
+- state generations
+- state hash + integrity MAC
+- atomic replacement with fsync-based reference persistence
+- restart recovery
+- independently signable rollback checkpoints
+- rollback detection when restored state is older than the retained checkpoint
 
-Run all tests:
+A persistence failure is fail-closed. A caller must not perform the requested side effect until durable authorization returns successfully.
 
-```bash
-python3 -m unittest discover -s tests -v
-```
+### `reference/mediation_graph.py` — AAB 0.4
+
+Statically checks the declared enforcement topology. Every path from an `agent` node to a `side_effect` node must include a `broker` before the sink.
+
+This identifies modeled bypass routes such as:
+
+- direct agent→effect access
+- alternate adapters
+- proxy bypasses
+- multi-agent bypasses
+- multiple sinks where only one is mediated
+
+It is structural evidence over the declared graph, not proof that the graph completely captures the deployed system.
+
+### `reference/delegation.py`
+
+Machine-verifies monotonic child-policy derivation. A child policy cannot widen objectives, operations, targets, destinations, credentials, side-effect ceiling, budgets, expiration, or delegation depth.
+
+### `reference/receipt_chain.py`
+
+Creates and verifies SHA-256-linked decision receipts. Receipt-chain tips can be bound into AAB 0.4 checkpoints.
 
 ---
 
 ## Adversarial Evidence
 
-`adversarial/aab_vectors.json` contains reproducible policy-level containment vectors including:
+### Policy/enforcement vectors
+
+`adversarial/aab_vectors.json` covers:
 
 - principal impersonation
 - objective substitution
@@ -175,17 +196,66 @@ python3 -m unittest discover -s tests -v
 - budget overruns
 - unauthorized delegation
 - malformed requests
-- exact-boundary cases
+- boundary conditions
 
-AAB 0.3 additionally tests enforcement-path attacks including signed-lease tampering, nonce replay, request-sequence gaps, stale/future requests, agent attempts to spoof cumulative usage, broker-budget exhaustion, and receipt mutation.
+AAB 0.3 broker tests additionally cover:
 
-These tests validate the reference controls under the tested assumptions. They do **not** establish that a frontier model cannot bypass an entire deployed containment architecture.
+- lease tampering
+- nonce replay
+- sequence gaps
+- stale/future requests
+- counter spoofing
+- cumulative budget exhaustion
+- receipt mutation
+
+### Bypass topology vectors — AAB 0.4
+
+`adversarial/bypass_topologies.json` adds reproducible topology checks for:
+
+- direct bypass
+- alternate adapter bypass
+- indirect proxy bypass
+- multi-agent bypass
+- broker-after-effect invalid placement
+- multi-sink partial mediation
+- mediated cycles
+- unreachable sinks that do not constitute functional containment proof
+
+### Durable-state tests — AAB 0.4
+
+`tests/test_durable_broker.py` exercises:
+
+- restart persistence
+- replay denial after restart
+- authenticated state-tamper detection
+- signed checkpoint verification
+- checkpoint-tamper detection
+- rollback detection using an older still-valid state image
+
+These tests establish specific properties of the reference mechanisms. They do **not** establish frontier-model containment.
+
+---
+
+## Run Tests
+
+```bash
+python3 -m py_compile reference/*.py
+python3 -m unittest discover -s tests -v
+```
+
+Existing policy-gate demonstration:
+
+```bash
+python3 reference/authority_gate.py \
+  --policy examples/authority_policy.json \
+  --requests examples/action_requests.json
+```
 
 ---
 
 ## AMCS Memory Runtime
 
-This repository also includes **AMCS (Atticus Memory Cell Sealing Protocol)**, a reference persistence/sealing runtime operating under AMAS governance.
+AMCS (Atticus Memory Cell Sealing Protocol) is the reference persistence/sealing runtime operating under AMAS memory governance.
 
 ```bash
 python3 reference/amcs.py seal \
@@ -196,8 +266,8 @@ python3 reference/amcs.py seal \
 python3 reference/amcs.py verify --cell out/DEMO_CELL.tar.gz
 ```
 
-- **AMCS** addresses memory provenance, sealing, integrity, and rehydration.
-- **AAB** addresses authorization of proposed side effects and integrity of the authorization path.
+- **AMCS** — memory provenance, sealing, integrity, rehydration.
+- **AAB** — external action authority and enforcement integrity.
 
 ---
 
@@ -205,28 +275,24 @@ python3 reference/amcs.py verify --cell out/DEMO_CELL.tar.gz
 
 AMAS uses independent capability axes.
 
-### Memory/runtime axis
+### C-axis — memory/runtime
 
 - `C1` — read-only hydrate
 - `C2` — hydrate + validate
 - `C3` — append-capable
 - `C4` — persistent-runtime full conformance
 
-### Action-boundary axis
+### A-axis — action authority
 
 - `A0` — no action-boundary claim
-- `A1` — observe/simulate boundary
-- `A2` — scoped side effects
+- `A1` — observe/simulate
+- `A2` — scoped side effects with enforcement integrity
 - `A3` — bounded delegation
-- `A4` — adversarial containment evidence profile
+- `A4` — adversarial containment
 
-Example declaration:
+A4 is explicitly evidence-bearing. AAB 0.4 supplies additional prerequisites for A4—durable broker state, rollback evidence, and mediation-graph testing—but the repository does **not** claim certified A4 containment.
 
-```text
-AMAS conformance: C3/A2
-```
-
-A4 is evidence-bearing. Documentation alone is insufficient.
+See [`CONFORMANCE_PROFILES.md`](CONFORMANCE_PROFILES.md).
 
 ---
 
@@ -246,91 +312,94 @@ amas-spec/
 ├── reference/
 │   ├── amcs.py
 │   ├── authority_gate.py
-│   ├── delegation.py
 │   ├── enforcement_broker.py
+│   ├── durable_broker.py
+│   ├── mediation_graph.py
+│   ├── delegation.py
 │   └── receipt_chain.py
 ├── schemas/
 │   ├── memory_object.schema.json
 │   ├── authority_policy.schema.json
 │   ├── signed_authority_lease.schema.json
-│   ├── action_request.schema.json
 │   ├── broker_action_request.schema.json
-│   ├── child_authority_policy.schema.json
-│   └── decision_receipt.schema.json
+│   ├── broker_state.schema.json
+│   ├── broker_checkpoint.schema.json
+│   ├── decision_receipt.schema.json
+│   └── ...
 ├── adversarial/
-│   └── aab_vectors.json
-├── examples/
+│   ├── aab_vectors.json
+│   └── bypass_topologies.json
 ├── tests/
-└── .github/workflows/
-    └── ci.yml
+│   ├── test_authority_gate.py
+│   ├── test_enforcement_broker.py
+│   ├── test_durable_broker.py
+│   ├── test_mediation_graph.py
+│   ├── test_delegation.py
+│   └── test_adversarial_vectors.py
+└── .github/workflows/ci.yml
 ```
 
 ---
 
-## Threat Model
+## Threat / Trust Boundary
 
-AMAS/AAB is designed to address or constrain:
+AMAS/AAB does not replace infrastructure security. Strong deployment also requires conventional controls such as:
 
-- prompt injection / tier impersonation
-- inference-to-authority promotion
-- provenance opacity
-- canonical-memory ambiguity
-- silent mutation/repair
-- target and destination scope creep
-- ambient credential use
-- privilege expansion
-- budget/rate expansion or reset
-- unauthorized delegation
-- action laundering through tool-using agents
-- signed-lease tampering
-- stale/replayed requests
-- agent-supplied false cumulative usage
+- process and namespace isolation
+- egress filtering
+- least-privilege identities
+- secret isolation
+- independent logs/monitoring
+- controlled subprocess and plugin paths
+- enumerated equivalent-effect channels
+- external checkpoint/key protection
 
-AMAS does not replace infrastructure security. If the enforcement plane is bypassed or compromised, AMAS cannot reconstruct the lost boundary after the fact.
-
-See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+If the enforcement plane or an unmodeled equivalent side-effect path is compromised, AAB cannot manufacture containment after the boundary has already been bypassed.
 
 ---
 
-## Status and Roadmap
+## Current Evidence Position
 
-Present in the repository:
+The repository contains executable mechanisms for substantial A2/A3 behavior and several A4 prerequisites.
 
-- [x] AMAS specification lineage and 2.0-draft governance/runtime split
+It does **not** claim:
+
+- certified production conformance
+- proven frontier-model containment
+- completeness of any real deployment's side-effect topology
+
+The next evidence step is a controlled mediated-agent harness where a capable model is intentionally encouraged to discover alternate action paths while the surrounding environment independently records whether every equivalent side effect remains broker-mediated.
+
+---
+
+## Roadmap
+
+- [x] AMAS governance core and runtime split
 - [x] AMCS reference sealing runtime
-- [x] Memory Object and runtime schemas
-- [x] AAB action-authority architecture
-- [x] executable deny-by-default policy gate
-- [x] monotonic delegation verifier/deriver
-- [x] tamper-evident decision receipt chain
+- [x] AAB external action-authority gate
+- [x] monotonic delegation verifier
 - [x] adversarial policy vector corpus
-- [x] signed authority lease reference mechanism
-- [x] replay-resistant enforcement broker
-- [x] broker-owned cumulative usage accounting
-- [x] automated unit/conformance tests and CI
-
-Next:
-
-- [ ] durable external nonce/sequence state across broker restarts
-- [ ] independent receipt-chain anchoring / signed checkpoints
-- [ ] machine-validated JSON Schema conformance suite
+- [x] signed reference leases
+- [x] broker-owned cumulative budgets/replay state
+- [x] durable authenticated broker state
+- [x] independently signable rollback checkpoints
+- [x] structural mediation/bypass corpus
+- [ ] JSON Schema instance validation in CI
 - [ ] deterministic Rule 4 specificity vectors
-- [ ] prompt-injection resistance benchmark
+- [ ] checkpoint anchor adapter for a genuinely separate failure domain
+- [ ] controlled provider/model mediated-agent harness
+- [ ] empirical equivalent-effect path enumeration
 - [ ] multi-agent authority negotiation protocol
-- [ ] provider/tool adapters that force all side effects through the broker
-- [ ] adversarial enforcement-path bypass harness
 - [ ] independent external evaluation
-- [ ] preprint/publication package
+- [ ] publication/preprint package
 
 ---
 
 ## Design Position
 
-AMAS is not a claim that a language model can be made trustworthy by instruction alone.
+AMAS is not a claim that instruction-following makes an agent trustworthy.
 
-The design assumes a capable model may misunderstand, overgeneralize, optimize around an evaluator, follow malicious retrieved instructions, discover unanticipated capabilities, or inaccurately represent its own state.
-
-The defensive authority boundary therefore belongs **outside the model**.
+The architecture assumes a capable agent can misunderstand, optimize around an evaluator, follow hostile retrieved instructions, or discover unintended capabilities. For consequential actions, the authority boundary therefore belongs **outside the model**.
 
 ---
 

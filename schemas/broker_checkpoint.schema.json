@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/broker_checkpoint.json",
+  "title": "AMAS AAB Broker Checkpoint",
+  "type": "object",
+  "required": ["checkpoint_version","lease_id","policy_id","generation","state_hash","receipt_count","receipt_chain_tip","checkpointed_at","signature_alg","checkpoint_mac"],
+  "properties": {
+    "checkpoint_version": {"const": 1},
+    "lease_id": {"type":"string","minLength":1},
+    "policy_id": {"type":["string","null"]},
+    "generation": {"type":"integer","minimum":1},
+    "state_hash": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "receipt_count": {"type":"integer","minimum":0},
+    "receipt_chain_tip": {"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "checkpointed_at": {"type":"string","format":"date-time"},
+    "signature_alg": {"const":"HMAC-SHA256"},
+    "checkpoint_mac": {"type":"string","pattern":"^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}
