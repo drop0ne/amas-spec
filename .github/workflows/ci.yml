@@ -15,18 +15,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check 'jsonschema==4.23.0'
       - name: Compile reference code
         run: python -m py_compile reference/*.py
-      - name: Run unit tests
+      - name: Run unit and conformance tests
         run: python -m unittest discover -s tests -v
-      - name: Validate JSON syntax
+      - name: Validate JSON syntax across schemas examples and adversarial corpora
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          for path in list(Path('schemas').glob('*.json')) + list(Path('examples').glob('*.json')):
-              json.loads(path.read_text(encoding='utf-8'))
-              print('PASS', path)
+          roots = [Path('schemas'), Path('examples'), Path('adversarial')]
+          for root in roots:
+              for path in sorted(root.glob('*.json')):
+                  json.loads(path.read_text(encoding='utf-8'))
+                  print('PASS', path)
           PY
       - name: Exercise AAB demo
         run: python reference/authority_gate.py --policy examples/authority_policy.json --requests examples/action_requests.json
+      - name: Exercise AMCS round trip
+        run: |
+          tmp="$(mktemp -d)"
+          python reference/amcs.py seal --input examples/chat_minimal.json --out-dir "$tmp" --cell-name CI_CELL
+          python reference/amcs.py verify --cell "$tmp/CI_CELL.tar.gz"
