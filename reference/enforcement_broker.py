@@ -158,11 +158,11 @@ class EnforcementBroker:
             gate_request.pop("lease_id", None)
             gate_request.pop("nonce", None)
             gate_request.pop("sequence", None)
-            gate_request["usage"] = prospective
+            gate_request["usage"] = dict(prospective)
 
             receipt = evaluate(self.policy, gate_request, now)
             receipt["lease_id"] = self.lease["lease_id"]
-            receipt["authoritative_usage"] = prospective
+            receipt["authoritative_usage"] = dict(prospective)
 
             # Once a structurally valid request reaches policy evaluation, its
             # sequence/nonce are consumed even if the policy denies it. This
@@ -171,7 +171,8 @@ class EnforcementBroker:
             self.last_sequence = sequence
 
             if receipt["decision"] == "ALLOW":
-                self.usage = prospective
+                # Keep mutable broker state distinct from immutable receipt data.
+                self.usage = dict(prospective)
             else:
                 # Attempted actions consume the action counter, but do not
                 # consume side-effect/network/egress/time budgets unless the
@@ -201,5 +202,6 @@ class EnforcementBroker:
             "seen_nonce_count": len(self.seen_nonces),
             "receipt_count": len(self.receipts),
             "receipt_chain_valid": verification["valid"],
-            "receipt_chain_tip": verification["chain_tip"],
+            "receipt_chain_tip": verification.get("chain_tip"),
+            "receipt_chain_error": None if verification["valid"] else verification.get("reason"),
         }
