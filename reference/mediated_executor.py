@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
 """AAB reference mediated execution binding.
 
-This module closes a narrow authorize-then-execute seam in the reference stack.
-A trusted adapter first resolves the *effective* action and broker cost. The AAB
-broker authorizes that prepared action. Only an ALLOW decision permits the same
-prepared object to reach the adapter's execute method.
+A trusted adapter resolves the *effective* action and broker cost before
+authorization. The AAB broker evaluates that prepared action. Only an ALLOW
+decision permits the same immutable PreparedAction to reach adapter execution.
 
-The acting model never supplies authoritative cost or effective adapter fields,
-and a denied preparation is never executed.
-
-This is still an in-process reference mechanism. A production deployment must
-ensure the model/caller has no second path to the underlying adapter, credential,
-network interface, subprocess, or equivalent side effect.
+The acting model never supplies authoritative cost or effective adapter fields.
+A production deployment must additionally ensure there is no second path to the
+underlying tool, credential, network interface, subprocess, or equivalent effect.
 """
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
 
@@ -38,7 +33,7 @@ def canonical_action_hash(obj: Any) -> str:
 
 
 def _json_clone(value: Any) -> Any:
-    """Return a detached JSON value and reject non-canonical object types."""
+    """Return a detached JSON value and reject non-JSON object types."""
     try:
         return json.loads(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
     except (TypeError, ValueError) as exc:
@@ -59,26 +54,68 @@ def _validate_cost(cost: Mapping[str, Any]) -> dict[str, int]:
     return normalized
 
 
-@dataclass(frozen=True)
 class PreparedAction:
-    """Immutable adapter-resolved action presented to the authorization broker."""
+    """Deeply immutable canonical adapter-resolved action.
 
-    adapter_id: str
-    broker_request: Mapping[str, Any]
-    parameters: Any
-    cost: Mapping[str, int]
+    Nested dictionaries/lists are serialized at construction. Every property
+    returns a fresh detached value, so neither caller nor adapter can mutate the
+    descriptor that was hashed and authorized.
+    """
+
+    __slots__ = ("_adapter_id", "_payload_json", "_action_hash", "_sealed")
+
+    def __init__(
+        self,
+        *,
+        adapter_id: str,
+        broker_request: Mapping[str, Any],
+        parameters: Any,
+        cost: Mapping[str, int],
+    ):
+        if not isinstance(adapter_id, str) or not adapter_id:
+            raise ExecutionBindingError("adapter_id must be a non-empty string")
+        payload = {
+            "adapter_id": adapter_id,
+            "broker_request": _json_clone(dict(broker_request)),
+            "parameters": _json_clone(parameters),
+            "cost": _validate_cost(cost),
+        }
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        object.__setattr__(self, "_adapter_id", adapter_id)
+        object.__setattr__(self, "_payload_json", payload_json)
+        object.__setattr__(self, "_action_hash", hashlib.sha256(payload_json.encode("utf-8")).hexdigest())
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("PreparedAction is immutable")
+        object.__setattr__(self, name, value)
+
+    def _payload(self) -> dict[str, Any]:
+        return json.loads(self._payload_json)
+
+    @property
+    def adapter_id(self) -> str:
+        return self._adapter_id
+
+    @property
+    def broker_request(self) -> dict[str, Any]:
+        return self._payload()["broker_request"]
+
+    @property
+    def parameters(self) -> Any:
+        return self._payload()["parameters"]
+
+    @property
+    def cost(self) -> dict[str, int]:
+        return self._payload()["cost"]
 
     def canonical_payload(self) -> dict[str, Any]:
-        return {
-            "adapter_id": self.adapter_id,
-            "broker_request": _json_clone(dict(self.broker_request)),
-            "parameters": _json_clone(self.parameters),
-            "cost": _validate_cost(self.cost),
-        }
+        return self._payload()
 
     @property
     def action_hash(self) -> str:
-        return canonical_action_hash(self.canonical_payload())
+        return self._action_hash
 
 
 class TrustedAdapter(Protocol):
@@ -111,10 +148,8 @@ _REQUIRED_BROKER_FIELDS = {
     "timestamp",
 }
 
-# Envelope fields establish the replay/freshness identity of the model request.
 # A trusted adapter may resolve effective operation/target/destination/credential
-# and side-effect class, but it must not silently change the request's authority
-# identity or replay envelope.
+# and side-effect class. It must not silently change authority/replay identity.
 _BOUND_ENVELOPE_FIELDS = (
     "request_id",
     "lease_id",
@@ -127,13 +162,7 @@ _BOUND_ENVELOPE_FIELDS = (
 
 
 class MediatedExecutor:
-    """Authorize and execute one adapter-prepared action as a single code path.
-
-    Callers provide an agent request and select a registered adapter. The adapter
-    resolves the effective action. The broker evaluates those effective fields.
-    The same immutable PreparedAction object is then passed to execute only when
-    the decision is ALLOW.
-    """
+    """Prepare, authorize, and conditionally execute one trusted-adapter action."""
 
     def __init__(self, broker: AuthorizationBroker, adapters: Mapping[str, TrustedAdapter]):
         if not adapters:
@@ -152,8 +181,8 @@ class MediatedExecutor:
         if not isinstance(adapter_id, str) or adapter_id not in self._adapters:
             raise ExecutionBindingError("unknown adapter")
 
-        # Detach model-supplied data before a trusted adapter sees it so later
-        # caller mutation cannot alter the preparation being authorized.
+        # Detach model-supplied data before trusted preparation. Later caller
+        # mutation therefore cannot change the request being resolved.
         model_request = _json_clone(dict(request))
         model_request.pop("adapter_id", None)
         adapter = self._adapters[adapter_id]
@@ -163,28 +192,26 @@ class MediatedExecutor:
         if prepared.adapter_id != adapter_id:
             raise ExecutionBindingError("prepared adapter identity mismatch")
 
-        broker_request = _json_clone(dict(prepared.broker_request))
+        broker_request = prepared.broker_request
         missing = _REQUIRED_BROKER_FIELDS - set(broker_request)
         if missing:
             raise ExecutionBindingError(f"prepared broker request missing fields:{','.join(sorted(missing))}")
 
-        # Prevent a trusted-adapter bug from switching replay/principal/objective
-        # identity while still allowing it to resolve the effective action.
         for field in _BOUND_ENVELOPE_FIELDS:
             if broker_request.get(field) != model_request.get(field):
                 raise ExecutionBindingError(f"prepared envelope mismatch:{field}")
 
-        cost = _validate_cost(prepared.cost)
-        parameters = _json_clone(prepared.parameters)
+        # Reconstruct once so adapter-provided PreparedAction cannot carry an
+        # implementation-specific subclass or mutable wrapper into dispatch.
         return PreparedAction(
             adapter_id=adapter_id,
             broker_request=broker_request,
-            parameters=parameters,
-            cost=cost,
+            parameters=prepared.parameters,
+            cost=prepared.cost,
         )
 
     def execute(self, request: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
-        """Prepare, authorize, durably bind, and conditionally execute one action."""
+        """Prepare, authorize, bind, and conditionally execute one action."""
         now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
             prepared = self._prepare(request)
@@ -199,14 +226,13 @@ class MediatedExecutor:
             }
 
         action_hash = prepared.action_hash
-        broker_request = _json_clone(dict(prepared.broker_request))
-        receipt = self.broker.authorize(broker_request, cost=dict(prepared.cost), now=now)
+        receipt = self.broker.authorize(prepared.broker_request, cost=prepared.cost, now=now)
         if not isinstance(receipt, dict):
             raise ExecutionBindingError("authorization broker returned invalid receipt")
 
-        # Bind the exact prepared descriptor into the caller-visible receipt.
-        # The underlying AAB receipt remains independently hash-chained by the
-        # broker; this field is an execution binding, not a rewrite of that hash.
+        # Underlying AAB receipt stays independently hash-chained by the broker.
+        # This detached field binds caller-visible authorization evidence to the
+        # exact immutable descriptor that will be dispatched.
         authorization = copy.deepcopy(receipt)
         authorization["execution_binding_hash"] = action_hash
 
