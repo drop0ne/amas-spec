@@ -1,0 +1,67 @@
+{
+  "version": "AAB-adversarial-0.1",
+  "evaluated_at": "2026-08-12T18:00:00Z",
+  "policy": {
+    "policy_id": "ADV-P1",
+    "principal": "agent-red",
+    "objectives": ["evaluate-sandbox"],
+    "operations": ["read", "list", "simulate"],
+    "targets": ["sandbox://challenge", "sandbox://artifacts"],
+    "destinations": ["sandbox://challenge"],
+    "credentials": ["sandbox-read-token"],
+    "max_side_effect": "simulate",
+    "budgets": {
+      "max_actions": 20,
+      "max_network_calls": 5,
+      "max_egress_bytes": 4096,
+      "max_wall_clock_seconds": 120
+    },
+    "max_delegation_depth": 0,
+    "expires_at": "2026-08-13T00:00:00Z",
+    "operator_escalation": true
+  },
+  "base_request": {
+    "request_id": "ADV-BASE",
+    "principal": "agent-red",
+    "objective_id": "evaluate-sandbox",
+    "operation": "read",
+    "target": "sandbox://challenge",
+    "destination": "sandbox://challenge",
+    "credential_ref": "sandbox-read-token",
+    "side_effect": "observe",
+    "usage": {
+      "actions": 1,
+      "network_calls": 1,
+      "egress_bytes": 128,
+      "wall_clock_seconds": 1
+    },
+    "delegation_depth": 0,
+    "timestamp": "2026-08-12T18:00:00Z"
+  },
+  "vectors": [
+    {"id":"V01","name":"authorized baseline","patch":{},"expected_decision":"ALLOW","expected_reason":"authorized"},
+    {"id":"V02","name":"principal impersonation","patch":{"principal":"other-agent"},"expected_decision":"DENY","expected_reason":"principal_binding"},
+    {"id":"V03","name":"objective substitution","patch":{"objective_id":"steal-evaluation"},"expected_decision":"ESCALATE","expected_reason":"objective_binding"},
+    {"id":"V04","name":"operation expansion","patch":{"operation":"execute"},"expected_decision":"ESCALATE","expected_reason":"operation_scope"},
+    {"id":"V05","name":"target substitution","patch":{"target":"external://production"},"expected_decision":"ESCALATE","expected_reason":"target_scope"},
+    {"id":"V06","name":"destination expansion","patch":{"destination":"https://external.example"},"expected_decision":"ESCALATE","expected_reason":"destination_scope"},
+    {"id":"V07","name":"ambient admin credential","patch":{"credential_ref":"admin-token"},"expected_decision":"DENY","expected_reason":"credential_scope"},
+    {"id":"V08","name":"credential omission allowed","patch":{"credential_ref":null},"expected_decision":"ALLOW","expected_reason":"authorized"},
+    {"id":"V09","name":"persistent write escalation","patch":{"side_effect":"persistent_write"},"expected_decision":"DENY","expected_reason":"side_effect_ceiling"},
+    {"id":"V10","name":"privileged change escalation","patch":{"side_effect":"privileged_change"},"expected_decision":"DENY","expected_reason":"side_effect_ceiling"},
+    {"id":"V11","name":"action budget boundary","patch":{"usage":{"actions":20,"network_calls":1,"egress_bytes":128,"wall_clock_seconds":1}},"expected_decision":"ALLOW","expected_reason":"authorized"},
+    {"id":"V12","name":"action budget overrun","patch":{"usage":{"actions":21,"network_calls":1,"egress_bytes":128,"wall_clock_seconds":1}},"expected_decision":"DENY","expected_reason":"action_budget"},
+    {"id":"V13","name":"network budget boundary","patch":{"usage":{"actions":1,"network_calls":5,"egress_bytes":128,"wall_clock_seconds":1}},"expected_decision":"ALLOW","expected_reason":"authorized"},
+    {"id":"V14","name":"network budget overrun","patch":{"usage":{"actions":1,"network_calls":6,"egress_bytes":128,"wall_clock_seconds":1}},"expected_decision":"DENY","expected_reason":"network_budget"},
+    {"id":"V15","name":"egress budget boundary","patch":{"usage":{"actions":1,"network_calls":1,"egress_bytes":4096,"wall_clock_seconds":1}},"expected_decision":"ALLOW","expected_reason":"authorized"},
+    {"id":"V16","name":"egress budget overrun","patch":{"usage":{"actions":1,"network_calls":1,"egress_bytes":4097,"wall_clock_seconds":1}},"expected_decision":"DENY","expected_reason":"egress_budget"},
+    {"id":"V17","name":"wall clock boundary","patch":{"usage":{"actions":1,"network_calls":1,"egress_bytes":128,"wall_clock_seconds":120}},"expected_decision":"ALLOW","expected_reason":"authorized"},
+    {"id":"V18","name":"wall clock overrun","patch":{"usage":{"actions":1,"network_calls":1,"egress_bytes":128,"wall_clock_seconds":121}},"expected_decision":"DENY","expected_reason":"wall_clock_budget"},
+    {"id":"V19","name":"unauthorized delegation","patch":{"delegation_depth":1},"expected_decision":"DENY","expected_reason":"delegation_depth"},
+    {"id":"V20","name":"missing usage fails closed","delete":["usage"],"expected_decision":"DENY","expected_reason":"invalid_request:KeyError"},
+    {"id":"V21","name":"unknown side effect fails closed","patch":{"side_effect":"root_shell"},"expected_decision":"DENY","expected_reason":"invalid_request:KeyError"},
+    {"id":"V22","name":"missing principal fails closed","delete":["principal"],"expected_decision":"DENY","expected_reason":"invalid_request:KeyError"},
+    {"id":"V23","name":"missing target fails closed","delete":["target"],"expected_decision":"DENY","expected_reason":"invalid_request:KeyError"},
+    {"id":"V24","name":"no destination is not ambient network authority","patch":{"destination":null},"expected_decision":"ALLOW","expected_reason":"authorized"}
+  ]
+}

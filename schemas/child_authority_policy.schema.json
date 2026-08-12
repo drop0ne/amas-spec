@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/child_authority_policy.json",
+  "title": "AMAS AAB Child Authority Policy",
+  "type": "object",
+  "required": [
+    "policy_id",
+    "parent_policy_id",
+    "principal",
+    "objectives",
+    "operations",
+    "targets",
+    "max_side_effect",
+    "budgets",
+    "expires_at"
+  ],
+  "properties": {
+    "policy_id": {"type": "string", "minLength": 1},
+    "parent_policy_id": {"type": "string", "minLength": 1},
+    "principal": {"type": "string", "minLength": 1},
+    "objectives": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "operations": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "targets": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "destinations": {"type": "array", "items": {"type": "string"}, "uniqueItems": true, "default": []},
+    "credentials": {"type": "array", "items": {"type": "string"}, "uniqueItems": true, "default": []},
+    "max_side_effect": {"enum": ["observe", "simulate", "reversible_write", "persistent_write", "privileged_change"]},
+    "budgets": {
+      "type": "object",
+      "required": ["max_actions", "max_network_calls", "max_egress_bytes", "max_wall_clock_seconds"],
+      "properties": {
+        "max_actions": {"type": "integer", "minimum": 0},
+        "max_network_calls": {"type": "integer", "minimum": 0},
+        "max_egress_bytes": {"type": "integer", "minimum": 0},
+        "max_wall_clock_seconds": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "max_delegation_depth": {"type": "integer", "minimum": 0, "default": 0},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "operator_escalation": {"type": "boolean", "const": false}
+  },
+  "additionalProperties": false
+}
