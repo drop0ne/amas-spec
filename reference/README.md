@@ -79,6 +79,20 @@ The reference gate covers:
 
 The reference HMAC mechanism is intentionally compact. Production signing material must remain outside the model's trust boundary.
 
+## Authorization-to-execution binding
+
+`mediated_executor.py` addresses the gap between a correct `ALLOW` decision and the tool invocation that actually occurs.
+
+A trusted adapter first prepares the **effective** action—including the real operation, target, destination, credential reference, side-effect class, adapter parameters, and broker cost. AAB authorizes those effective fields, not merely the model's claimed fields. Only an `ALLOW` decision permits the same immutable `PreparedAction` object to reach the adapter's `execute()` method.
+
+The prepared descriptor receives a canonical SHA-256 action hash that is exposed as `execution_binding_hash` in the caller-visible authorization evidence.
+
+The reference executor also prevents adapter preparation from silently changing the request's lease ID, nonce, sequence, principal, objective ID, request ID, or timestamp.
+
+See [`../docs/EXECUTION_BINDING.md`](../docs/EXECUTION_BINDING.md).
+
+This is still an in-process reference. A production system must prevent direct access to the underlying adapter/tool and should combine execution binding with durable, transactional authorization state.
+
 ## Durable enforcement state
 
 `durable_broker.py` adds AAB 0.4 reference mechanisms for:
@@ -127,6 +141,7 @@ The test suite includes:
 - policy and adversarial AAB vectors;
 - monotonic delegation checks;
 - enforcement-broker replay/budget tests;
+- authorization-to-execution binding tests;
 - durable restart/rollback tests;
 - mediation/bypass topology tests;
 - AMCS archive/filesystem boundary tests;
@@ -140,6 +155,7 @@ CI additionally performs an AMCS seal→verify round trip.
 - **Runtime Binding** — lifecycle mechanics implementing AMAS governance.
 - **AMCS** — sealing, provenance, integrity, and memory persistence.
 - **AAB policy/enforcement components** — external action authorization and enforcement-state integrity.
+- **AAB mediated execution** — binding the authorized effective action to trusted adapter dispatch.
 
 Production AAB deployments still require complete mediation of relevant side effects, process isolation, network egress controls, least-privilege identities, secret isolation, controlled subprocess/plugin paths, transactional authorization state, independently protected evidence, and adversarial evaluation.
 
