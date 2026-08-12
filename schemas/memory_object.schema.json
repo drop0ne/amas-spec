@@ -93,11 +93,17 @@
     },
     {
       "if": {"properties": {"escalated_by": {"type": "string"}}, "required": ["escalated_by"]},
-      "then": {"properties": {"escalated_from": {"type": "integer"}}}
+      "then": {
+        "required": ["escalated_from", "authn_context", "provenance"],
+        "properties": {"escalated_from": {"type": "integer"}}
+      }
     },
     {
       "if": {"properties": {"authn_context": {"type": "string"}}, "required": ["authn_context"]},
-      "then": {"properties": {"escalated_from": {"type": "integer"}}}
+      "then": {
+        "required": ["escalated_from", "escalated_by", "provenance"],
+        "properties": {"escalated_from": {"type": "integer"}}
+      }
     }
   ],
   "additionalProperties": false
