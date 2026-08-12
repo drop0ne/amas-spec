@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/signed_child_authority_lease.json",
+  "title": "AMAS AAB Signed Child Authority Lease",
+  "description": "Integrity-protected delegated authority whose embedded child policy carries explicit parent lineage.",
+  "type": "object",
+  "required": [
+    "lease_id",
+    "issuer",
+    "issued_at",
+    "max_request_age_seconds",
+    "signature_alg",
+    "policy",
+    "signature"
+  ],
+  "properties": {
+    "lease_id": {"type": "string", "minLength": 1},
+    "issuer": {"type": "string", "minLength": 1},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "max_request_age_seconds": {"type": "integer", "minimum": 0},
+    "signature_alg": {"const": "HMAC-SHA256"},
+    "policy": {"$ref": "child_authority_policy.schema.json"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}
