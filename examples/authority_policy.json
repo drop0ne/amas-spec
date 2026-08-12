@@ -1,0 +1,19 @@
+{
+  "policy_id": "AAB-DEMO-001",
+  "principal": "research-agent",
+  "objectives": ["evaluate-contained-target"],
+  "operations": ["read", "analyze"],
+  "targets": ["sandbox://target-a"],
+  "destinations": ["sandbox://target-a"],
+  "credentials": [],
+  "max_side_effect": "simulate",
+  "budgets": {
+    "max_actions": 50,
+    "max_network_calls": 20,
+    "max_egress_bytes": 1000000,
+    "max_wall_clock_seconds": 1800
+  },
+  "max_delegation_depth": 0,
+  "expires_at": "2099-01-01T00:00:00Z",
+  "operator_escalation": true
+}
