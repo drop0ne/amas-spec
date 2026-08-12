@@ -12,6 +12,18 @@
     "evaluated_at": {"type": "string", "format": "date-time"},
     "policy_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "lease_id": {"type": "string", "minLength": 1},
+    "authoritative_usage": {
+      "type": "object",
+      "required": ["actions", "network_calls", "egress_bytes", "wall_clock_seconds"],
+      "properties": {
+        "actions": {"type": "integer", "minimum": 0},
+        "network_calls": {"type": "integer", "minimum": 0},
+        "egress_bytes": {"type": "integer", "minimum": 0},
+        "wall_clock_seconds": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
     "sequence": {"type": "integer", "minimum": 0},
     "previous_receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
@@ -24,6 +36,10 @@
     {
       "if": {"anyOf": [{"required": ["sequence"]}, {"required": ["previous_receipt_hash"]}]},
       "then": {"required": ["receipt_hash", "sequence", "previous_receipt_hash"]}
+    },
+    {
+      "if": {"required": ["lease_id"]},
+      "then": {"required": ["authoritative_usage"]}
     }
   ],
   "additionalProperties": false
