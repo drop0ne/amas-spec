@@ -11,7 +11,20 @@
     "reason": {"type": "string"},
     "evaluated_at": {"type": "string", "format": "date-time"},
     "policy_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "previous_receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
+  "allOf": [
+    {
+      "if": {"required": ["receipt_hash"]},
+      "then": {"required": ["sequence", "previous_receipt_hash"]}
+    },
+    {
+      "if": {"anyOf": [{"required": ["sequence"]}, {"required": ["previous_receipt_hash"]}]},
+      "then": {"required": ["receipt_hash", "sequence", "previous_receipt_hash"]}
+    }
+  ],
   "additionalProperties": false
 }
