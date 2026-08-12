@@ -60,7 +60,7 @@ def request(seq=1, nonce="nonce-1", target="sandbox://allowed", side_effect="obs
         "credential_ref": "read-token",
         "side_effect": side_effect,
         "timestamp": "2026-08-12T22:30:00Z",
-        "parameters": {"path": "/record"},
+        "parameters": {"path": "/record", "options": {"limit": 1}},
     }
 
 
@@ -100,6 +100,30 @@ class MockAdapter:
 
 
 class MediatedExecutorTests(unittest.TestCase):
+    def test_prepared_action_is_deeply_immutable(self):
+        broker_request = {key: value for key, value in request().items() if key not in {"adapter_id", "parameters"}}
+        action = PreparedAction(
+            adapter_id="mock",
+            broker_request=broker_request,
+            parameters={"nested": {"value": 1}},
+            cost={"actions": 1, "network_calls": 1, "egress_bytes": 0, "wall_clock_seconds": 1},
+        )
+        original_hash = action.action_hash
+
+        # Mutating the source objects after construction cannot affect action.
+        broker_request["target"] = "sandbox://mutated"
+        self.assertEqual(action.broker_request["target"], "sandbox://allowed")
+        self.assertEqual(action.action_hash, original_hash)
+
+        # Returned properties are detached copies, including nested values.
+        params = action.parameters
+        params["nested"]["value"] = 999
+        self.assertEqual(action.parameters["nested"]["value"], 1)
+        self.assertEqual(action.action_hash, original_hash)
+
+        with self.assertRaises(AttributeError):
+            action._adapter_id = "other"
+
     def test_authorized_prepared_action_executes(self):
         adapter = MockAdapter()
         executor = MediatedExecutor(EnforcementBroker(lease(), KEY), {"mock": adapter})
