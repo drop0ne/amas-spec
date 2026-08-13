@@ -3,13 +3,33 @@
   "$id": "https://example.local/amcs/schemas/tensor_summary.json",
   "title": "AMCS Mechanical Tensor Summary",
   "type": "object",
-  "required": ["tensor_id", "allowed_operation", "source_matrix_rows", "metrics"],
+  "required": [
+    "tensor_id", "allowed_operation", "source_matrix_rows", "source_prompt_ids",
+    "source_response_ids", "source_message_hashes", "metrics"
+  ],
   "properties": {
     "tensor_id": {"type": "string", "minLength": 1},
     "allowed_operation": {"const": "count"},
     "source_matrix_rows": {
       "type": "array",
       "items": {"type": "string", "pattern": "^MMSG[0-9]{6}$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "source_prompt_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^P[0-9]{6}$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "source_response_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^R[0-9]{6}$"},
+      "uniqueItems": true
+    },
+    "source_message_hashes": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
       "minItems": 1,
       "uniqueItems": true
     },
