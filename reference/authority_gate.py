@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from canonical_json import CanonicalJSONError, sha256 as canonical_sha256, validate as validate_canonical
+
 SIDE_EFFECT = {
     "observe": 0,
     "simulate": 1,
@@ -23,11 +25,26 @@ SIDE_EFFECT = {
 
 
 def canonical_hash(obj: Any) -> str:
-    raw = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return canonical_sha256(obj)
+
+
+def safe_diagnostic_hash(obj: Any) -> str:
+    """Always return a SHA-256 diagnostic identity, even for rejected objects.
+
+    Valid Canonical JSON v1 values use their normative canonical identity.
+    Invalid values are hashed only as a local diagnostic representation and
+    MUST NOT be treated as a normative cross-runtime object identity.
+    """
+    try:
+        return canonical_hash(obj)
+    except (CanonicalJSONError, TypeError, ValueError, RecursionError):
+        raw = repr(obj).encode("utf-8", errors="backslashreplace")
+        return hashlib.sha256(b"INVALID-CANONICAL-JSON-V1\x00" + raw).hexdigest()
 
 
 def parse_time(value: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp must be a non-empty string")
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
     dt = datetime.fromisoformat(value)
@@ -45,9 +62,21 @@ def _outcome(policy: dict[str, Any], hard: bool) -> str:
 def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Return an auditable decision receipt. Fail closed on malformed input."""
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
     checks: list[tuple[str, bool, bool]] = []
 
     try:
+        if not isinstance(policy, dict) or not isinstance(request, dict):
+            raise TypeError("policy and request must be objects")
+        # Reject NaN/floats, non-string keys, unsafe integers, surrogate strings,
+        # and other values outside the repository security encoding before any
+        # authorization rule is evaluated.
+        validate_canonical(policy)
+        validate_canonical(request)
+
         expires = parse_time(policy["expires_at"])
         checks.append(("policy_freshness", now <= expires, True))
         checks.append(("principal_binding", request["principal"] == policy["principal"], True))
@@ -74,6 +103,10 @@ def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | No
 
         budgets = policy["budgets"]
         usage = request["usage"]
+        for field in ("actions", "network_calls", "egress_bytes", "wall_clock_seconds"):
+            value = usage[field]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"invalid usage:{field}")
         checks.append(("action_budget", usage["actions"] <= budgets["max_actions"], True))
         checks.append(("network_budget", usage["network_calls"] <= budgets["max_network_calls"], True))
         checks.append(("egress_budget", usage["egress_bytes"] <= budgets["max_egress_bytes"], True))
@@ -86,17 +119,23 @@ def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | No
             decision = _outcome(policy, hard)
         else:
             reason, decision = "authorized", "ALLOW"
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, CanonicalJSONError, RecursionError) as exc:
         reason, decision = f"invalid_request:{type(exc).__name__}", "DENY"
 
+    policy_id = policy.get("policy_id", "UNKNOWN") if isinstance(policy, dict) else "UNKNOWN"
+    request_id = request.get("request_id", "UNKNOWN") if isinstance(request, dict) else "UNKNOWN"
+    if not isinstance(policy_id, str):
+        policy_id = "UNKNOWN"
+    if not isinstance(request_id, str):
+        request_id = "UNKNOWN"
     return {
-        "request_id": request.get("request_id", "UNKNOWN"),
-        "policy_id": policy.get("policy_id", "UNKNOWN"),
+        "request_id": request_id,
+        "policy_id": policy_id,
         "decision": decision,
         "reason": reason,
         "evaluated_at": now.isoformat().replace("+00:00", "Z"),
-        "policy_hash": canonical_hash(policy),
-        "request_hash": canonical_hash(request),
+        "policy_hash": safe_diagnostic_hash(policy),
+        "request_hash": safe_diagnostic_hash(request),
     }
 
 
@@ -106,13 +145,13 @@ def main() -> int:
     parser.add_argument("--requests", required=True, type=Path)
     args = parser.parse_args()
 
-    policy = json.loads(args.policy.read_text(encoding="utf-8"))
-    requests = json.loads(args.requests.read_text(encoding="utf-8"))
+    policy = json.loads(args.policy.read_text(encoding="utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"non-finite JSON constant:{value}")))
+    requests = json.loads(args.requests.read_text(encoding="utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"non-finite JSON constant:{value}")))
     if isinstance(requests, dict):
         requests = [requests]
 
     for request in requests:
-        print(json.dumps(evaluate(policy, request), sort_keys=True))
+        print(json.dumps(evaluate(policy, request), sort_keys=True, allow_nan=False))
     return 0
 
 
