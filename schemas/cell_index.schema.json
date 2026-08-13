@@ -4,82 +4,47 @@
   "title": "AMCS Cell Index Record",
   "type": "object",
   "required": [
-    "cell_id",
-    "content_hash",
-    "created_at",
-    "domains",
-    "topics",
-    "entities",
-    "claims",
-    "evidence_types",
-    "case_study_id"
+    "cell_id", "content_hash", "created_at", "domains", "topics", "entities",
+    "claims", "evidence_types", "case_study_id", "source_prompt_ids",
+    "source_response_ids", "source_message_hashes"
   ],
   "properties": {
-    "cell_id": {
-      "type": "string"
-    },
-    "content_hash": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "domains": {
+    "cell_id": {"type": "string", "minLength": 1},
+    "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "domains": {"type": "array", "items": {"type": "string"}},
+    "topics": {"type": "array", "items": {"type": "string"}},
+    "entities": {"type": "array", "items": {"type": "string"}},
+    "claims": {"type": "array", "items": {"type": "string"}},
+    "evidence_types": {"type": "array", "items": {"type": "string"}},
+    "source_prompt_ids": {
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": {"type": "string", "pattern": "^P[0-9]{6}$"},
+      "minItems": 1,
+      "uniqueItems": true
     },
-    "topics": {
+    "source_response_ids": {
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": {"type": "string", "pattern": "^R[0-9]{6}$"},
+      "uniqueItems": true
     },
-    "entities": {
+    "source_message_hashes": {
       "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "claims": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "evidence_types": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+      "minItems": 1,
+      "uniqueItems": true
     },
     "parent_cell_hashes": {
       "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
-      },
+      "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
       "default": []
     },
     "delta_type": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "enum": [
-        "additive",
-        "corrective",
-        "contextual",
-        null
-      ],
+      "type": ["string", "null"],
+      "enum": ["additive", "corrective", "contextual", null],
       "default": null
     },
-    "case_study_id": {
-      "type": "string"
-    }
+    "case_study_id": {"type": "string", "minLength": 1}
   },
   "additionalProperties": false
 }
