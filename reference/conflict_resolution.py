@@ -9,6 +9,7 @@ because their text contains imperative language.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from itertools import combinations
 from typing import Any
 
 DIRECTIVE = "DIRECTIVE"
@@ -202,4 +203,95 @@ def resolve_pair(
             "winner": None,
             "loser": None,
             "reason": f"invalid_conflict:{type(exc).__name__}:{exc}",
+        }
+
+
+def resolve_set(objects: list[dict[str, Any]], *, conflict_kind: str = "directive") -> dict[str, Any]:
+    """Resolve a multi-object conflict by unique pairwise domination.
+
+    A candidate is a winner only if it defeats every other candidate under the
+    exact pairwise protocol. This intentionally conservative rule is independent
+    of input order and avoids inventing transitive precedence where pairwise
+    arbitration left a relation unresolved. If no unique all-dominator exists,
+    Rule 5 applies.
+    """
+    try:
+        if not isinstance(objects, list) or not objects:
+            raise ValueError("objects must be a non-empty array")
+        if conflict_kind not in {"directive", "claim"}:
+            raise ValueError("unsupported conflict_kind")
+        for obj in objects:
+            if not isinstance(obj, dict):
+                raise ValueError("every candidate must be an object")
+            _validate_object(obj)
+        ids = [obj["object_id"] for obj in objects]
+        if len(ids) != len(set(ids)):
+            raise ValueError("object_id values must be unique")
+
+        candidates = objects
+        excluded: list[str] = []
+        if conflict_kind == "directive":
+            candidates = [obj for obj in objects if obj["semantic_role"] == DIRECTIVE]
+            excluded = [obj["object_id"] for obj in objects if obj["semantic_role"] != DIRECTIVE]
+            if not candidates:
+                return {
+                    "decision": "NO_DIRECTIVE",
+                    "rule": "semantic_role_admissibility",
+                    "winner": None,
+                    "reason": "no directive candidates",
+                    "excluded_non_directives": sorted(excluded),
+                    "pairwise": [],
+                }
+            if len(candidates) == 1:
+                return {
+                    "decision": "RESOLVED",
+                    "rule": "semantic_role_admissibility",
+                    "winner": candidates[0]["object_id"],
+                    "reason": "only one directive candidate remains",
+                    "excluded_non_directives": sorted(excluded),
+                    "pairwise": [],
+                }
+
+        wins: dict[str, set[str]] = {obj["object_id"]: set() for obj in candidates}
+        pairwise: list[dict[str, Any]] = []
+        for left, right in combinations(candidates, 2):
+            result = resolve_pair(left, right, conflict_kind=conflict_kind)
+            pairwise.append({
+                "object_a": left["object_id"],
+                "object_b": right["object_id"],
+                "decision": result["decision"],
+                "rule": result["rule"],
+                "winner": result.get("winner"),
+            })
+            if result["decision"] == "RESOLVED" and result.get("winner") in wins:
+                loser = right["object_id"] if result["winner"] == left["object_id"] else left["object_id"]
+                wins[result["winner"]].add(loser)
+
+        required_wins = len(candidates) - 1
+        dominators = sorted(candidate for candidate, defeated in wins.items() if len(defeated) == required_wins)
+        if len(dominators) == 1:
+            return {
+                "decision": "RESOLVED",
+                "rule": "multi_object_unique_dominator",
+                "winner": dominators[0],
+                "reason": "one candidate defeats every other candidate under pairwise AMAS arbitration",
+                "excluded_non_directives": sorted(excluded),
+                "pairwise": pairwise,
+            }
+        return {
+            "decision": "HALT_ESCALATE",
+            "rule": "rule_5_unresolved",
+            "winner": None,
+            "reason": "multi-object conflict has no unique pairwise dominator",
+            "excluded_non_directives": sorted(excluded),
+            "pairwise": pairwise,
+        }
+    except (KeyError, TypeError, ValueError) as exc:
+        return {
+            "decision": "HALT_ESCALATE",
+            "rule": "invalid_conflict",
+            "winner": None,
+            "reason": f"invalid_conflict:{type(exc).__name__}:{exc}",
+            "excluded_non_directives": [],
+            "pairwise": [],
         }

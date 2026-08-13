@@ -3,7 +3,7 @@
   "$id": "https://example.local/amcs/schemas/prompt_response_map.json",
   "title": "AMCS Prompt–Response Map",
   "type": "object",
-  "required": ["mappings", "no_response_required_prompt_ids", "unanswered_prompt_ids"],
+  "required": ["mappings", "no_response_required_prompt_ids", "unanswered_prompt_ids", "unlinked_response_ids"],
   "properties": {
     "mappings": {
       "type": "array",
@@ -20,7 +20,8 @@
       }
     },
     "no_response_required_prompt_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-    "unanswered_prompt_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+    "unanswered_prompt_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "unlinked_response_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
   },
   "additionalProperties": false
 }

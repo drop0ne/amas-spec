@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "reference"
 sys.path.insert(0, str(REFERENCE))
 
-from conflict_resolution import resolve_pair
+from conflict_resolution import resolve_pair, resolve_set
 
 
 def mo(
@@ -118,6 +118,43 @@ class ConflictResolutionTests(unittest.TestCase):
         b = mo("B", role="OBSERVATION")
         result = resolve_pair(a, b, conflict_kind="directive")
         self.assertEqual(result["decision"], "NO_DIRECTIVE")
+
+    def test_multi_object_unique_dominator_is_order_independent(self):
+        canonical = mo("CANONICAL", tier=0, scope_path=["global"])
+        session_a = mo("A", tier=2, created="2026-08-12T19:00:00Z")
+        session_b = mo("B", tier=2, created="2026-08-12T20:00:00Z")
+        first = resolve_set([canonical, session_a, session_b])
+        second = resolve_set([session_b, canonical, session_a])
+        self.assertEqual(first["decision"], "RESOLVED")
+        self.assertEqual(first["winner"], "CANONICAL")
+        self.assertEqual(second["winner"], "CANONICAL")
+        self.assertEqual(first["rule"], "multi_object_unique_dominator")
+
+    def test_multi_object_unresolved_losers_do_not_block_unique_dominator(self):
+        canonical = mo("CANONICAL", tier=0, scope_path=["global"])
+        a = mo("A", tier=2, scope_path=["global", "session", "A"])
+        b = mo("B", tier=2, scope_path=["global", "session", "B"])
+        result = resolve_set([a, canonical, b])
+        self.assertEqual(result["decision"], "RESOLVED")
+        self.assertEqual(result["winner"], "CANONICAL")
+
+    def test_multi_object_without_all_dominator_halts(self):
+        a = mo("A", scope_path=["global", "session", "A"])
+        b = mo("B", scope_path=["global", "session", "B"])
+        c = mo("C", scope_path=["global", "session", "C"])
+        result = resolve_set([a, b, c])
+        self.assertEqual(result["decision"], "HALT_ESCALATE")
+        self.assertEqual(result["winner"], None)
+
+    def test_multi_object_filters_non_directives_before_arbitration(self):
+        directive = mo("D", role="DIRECTIVE")
+        evidence = mo("E", role="EVIDENCE", created="2026-08-12T23:00:00Z")
+        observation = mo("O", role="OBSERVATION", created="2026-08-12T23:30:00Z")
+        result = resolve_set([evidence, directive, observation])
+        self.assertEqual(result["decision"], "RESOLVED")
+        self.assertEqual(result["winner"], "D")
+        self.assertEqual(result["rule"], "semantic_role_admissibility")
+        self.assertEqual(result["excluded_non_directives"], ["E", "O"])
 
     def test_adversarial_conflict_corpus(self):
         vectors = json.loads((ROOT / "adversarial" / "amas_conflict_vectors.json").read_text(encoding="utf-8"))
