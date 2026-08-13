@@ -2,22 +2,39 @@
 """AMAS AAB reference enforcement broker.
 
 Security-critical mutable state lives outside the acting model. HMAC-SHA256 is
-retained only as a compact reference authentication mechanism.
+retained only as a compact reference authentication mechanism. Lease admission
+uses the same exact policy validator as the policy gate/delegation runtime so a
+cryptographically authentic but schema-invalid envelope cannot enter broker
+state.
 """
 from __future__ import annotations
 
 import copy
 import hashlib
 import hmac
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from authority_gate import evaluate, parse_time, safe_diagnostic_hash
+from authority_gate import evaluate, parse_time, safe_diagnostic_hash, validate_policy
 from canonical_json import CanonicalJSONError, MAX_SAFE_INTEGER, bytes_ as canonical_bytes, sha256 as canonical_hash, validate as validate_canonical
 from receipt_chain import GENESIS, append_receipt, verify_chain
 
 USAGE_KEYS = ("actions", "network_calls", "egress_bytes", "wall_clock_seconds")
 _MIN_NONCE_LENGTH = 16
+_LEASE_REQUIRED = {
+    "lease_version",
+    "lease_id",
+    "issuer",
+    "key_id",
+    "issued_at",
+    "not_before",
+    "max_request_age_seconds",
+    "signature_alg",
+    "policy",
+    "signature",
+}
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _canonical_bytes(obj: Any) -> bytes:
@@ -54,11 +71,38 @@ def verify_lease_signature(lease: dict[str, Any], key: bytes) -> bool:
         if not isinstance(lease, dict):
             return False
         signature = lease.get("signature")
-        if not isinstance(signature, str):
+        if not isinstance(signature, str) or _HEX64_RE.fullmatch(signature) is None:
             return False
         return hmac.compare_digest(signature, sign_lease(lease, key))
     except (TypeError, ValueError, CanonicalJSONError, RecursionError):
         return False
+
+
+def _validate_lease_shape(lease: dict[str, Any]) -> tuple[datetime, datetime]:
+    if not isinstance(lease, dict) or set(lease) != _LEASE_REQUIRED:
+        raise ValueError("lease must contain exactly the signed lease schema fields")
+    validate_canonical(lease)
+    if lease.get("signature_alg") != "HMAC-SHA256":
+        raise ValueError("unsupported signature algorithm")
+    if lease.get("lease_version") != 1:
+        raise ValueError("unsupported lease version")
+    for field in ("lease_id", "issuer", "key_id"):
+        if not isinstance(lease.get(field), str) or not lease[field]:
+            raise ValueError(f"invalid {field}")
+    signature = lease.get("signature")
+    if not isinstance(signature, str) or _HEX64_RE.fullmatch(signature) is None:
+        raise ValueError("invalid signature")
+    issued = parse_time(lease["issued_at"])
+    not_before = parse_time(lease["not_before"])
+    if not_before < issued:
+        raise ValueError("not_before cannot precede issued_at")
+    max_age = lease.get("max_request_age_seconds")
+    if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 0 or max_age > MAX_SAFE_INTEGER:
+        raise ValueError("invalid max_request_age_seconds")
+    validate_policy(lease["policy"])
+    if parse_time(lease["policy"]["expires_at"]) < not_before:
+        raise ValueError("policy expires before lease becomes valid")
+    return issued, not_before
 
 
 def _zero_usage() -> dict[str, int]:
@@ -82,12 +126,8 @@ def _validate_cost(cost: Any) -> dict[str, int]:
 def _validate_execution_binding(value: str | None) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or len(value) != 64 or value != value.lower():
+    if not isinstance(value, str) or _HEX64_RE.fullmatch(value) is None:
         raise ValueError("execution binding must be a lowercase SHA-256 hex string")
-    try:
-        int(value, 16)
-    except ValueError as exc:
-        raise ValueError("execution binding must be hexadecimal") from exc
     return value
 
 
@@ -117,29 +157,13 @@ class EnforcementBroker:
         revocation_checker: Callable[[str], bool] | None = None,
     ):
         _validate_key(verification_key)
-        if not isinstance(lease, dict) or not verify_lease_signature(lease, verification_key):
+        if not isinstance(lease, dict):
+            raise ValueError("lease must be an object")
+        _, not_before = _validate_lease_shape(lease)
+        if not verify_lease_signature(lease, verification_key):
             raise ValueError("invalid lease signature")
-        if lease.get("signature_alg") != "HMAC-SHA256":
-            raise ValueError("unsupported signature algorithm")
-        if lease.get("lease_version") != 1:
-            raise ValueError("unsupported lease version")
-        for field in ("lease_id", "issuer", "key_id"):
-            if not isinstance(lease.get(field), str) or not lease[field]:
-                raise ValueError(f"invalid {field}")
-        issued = parse_time(lease["issued_at"])
-        not_before = parse_time(lease["not_before"])
-        if not_before < issued:
-            raise ValueError("not_before cannot precede issued_at")
-        max_age = lease.get("max_request_age_seconds")
-        if not isinstance(max_age, int) or isinstance(max_age, bool) or max_age < 0 or max_age > MAX_SAFE_INTEGER:
-            raise ValueError("invalid max_request_age_seconds")
-        if not isinstance(lease.get("policy"), dict):
-            raise ValueError("missing policy")
-        if parse_time(lease["policy"]["expires_at"]) < not_before:
-            raise ValueError("policy expires before lease becomes valid")
         if revocation_checker is not None and not callable(revocation_checker):
             raise ValueError("revocation_checker must be callable")
-        validate_canonical(lease)
 
         self.lease = copy.deepcopy(lease)
         self.policy = copy.deepcopy(lease["policy"])
@@ -217,7 +241,6 @@ class EnforcementBroker:
         raw_request_hash: str | None = None
         binding: str | None = None
         try:
-            # Canonicalization is an admission check, not merely a hash format.
             validate_canonical(request)
             raw_request_hash = _hash(request)
             binding = _validate_execution_binding(execution_binding_hash)
