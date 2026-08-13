@@ -1,6 +1,6 @@
 # AMAS Runtime Binding Contract
 
-**Status:** Draft RC3  
+**Status:** Draft RC4  
 **Purpose:** runtime mechanics that implement AMAS governance without changing AMAS Core doctrine.
 
 ## 1. Scope
@@ -13,16 +13,13 @@ AMAS Core decides what counts as authoritative. Runtime Binding defines how thos
 
 ## 3. Ingestion and semantic-role binding
 
-Runtime ingestion MUST preserve enough trusted metadata to assign both:
+Runtime ingestion MUST preserve enough trusted metadata to assign both `authority_tier` and `semantic_role` (`DIRECTIVE`, `EVIDENCE`, `OBSERVATION`, `INFERENCE`).
 
-- `authority_tier`; and
-- `semantic_role` (`DIRECTIVE`, `EVIDENCE`, `OBSERVATION`, `INFERENCE`).
-
-Imperative wording MUST NOT elevate `EVIDENCE`, `OBSERVATION`, or `INFERENCE` into a directive.
-
-Where one message/document contains semantically distinct directives and quoted/evidentiary material, implementations SHOULD segment those units rather than let message boundaries silently transfer directive authority.
+Imperative wording MUST NOT elevate `EVIDENCE`, `OBSERVATION`, or `INFERENCE` into a directive. Where one source contains distinct directives and quoted/evidentiary material, implementations SHOULD segment those units rather than let message boundaries silently transfer directive authority.
 
 A non-directive → directive transition MUST create a new auditable object issued by a principal already authorized to create that directive.
+
+Every Memory Object MUST pass the normative machine contract before participating in authority arbitration. A malformed high-tier object MUST NOT acquire authority merely because the subset of fields inspected by an implementation happens to look privileged.
 
 ## 4. Activation contract
 
@@ -55,7 +52,9 @@ Runtime conflict arbitration MUST implement the ordering in `SPEC.md`:
 5. recency;
 6. unresolved → halt/escalate.
 
-A runtime MUST NOT add an undocumented probabilistic or model-selected tie-breaker.
+Explicit supersession is an authority-bearing operation. A `supersedes` field and provenance metadata are not self-authenticating. Before Rule 2 resolves a conflict, the runtime MUST verify both structural traceability and authorization of the issuing actor for the superseded tier/scope through a trusted authority service/context outside the disputed Memory Object itself.
+
+Missing, false, malformed, or unavailable supersession authorization MUST fail closed to Rule 5. A runtime MUST NOT add an undocumented probabilistic or model-selected tie-breaker.
 
 ## 7. Append
 
@@ -81,7 +80,8 @@ Authoritative export MUST satisfy the declared conformance profile. A proof bund
 - export timestamp;
 - export receipt hash;
 - operator-visible state hash;
-- applicable action-decision chain tip where AAB is active.
+- applicable action-decision chain tip where AAB is active;
+- applicable completion/effect state for side effects that were dispatched.
 
 ## 10. Runtime states
 
@@ -108,26 +108,34 @@ Minimum flow:
 2. trusted adapter resolves the effective action and security-relevant effects;
 3. configured capability contract validates adapter-specific parameters/effects;
 4. runtime binds the request to the active authenticated lease;
-5. AAB validates lease validity/revocation, replay state, scope, credential/destination/effect ceilings, and cumulative budgets;
+5. AAB validates exact lease/policy shape, lease validity/revocation, replay state, scope, credential/destination/effect ceilings, and cumulative budgets;
 6. exact prepared-action hash is included in the chained authorization receipt;
-7. durable state is committed before execution authority is released;
-8. only `ALLOW` carrying the same action binding reaches the registered adapter;
-9. the same immutable prepared object is dispatched.
+7. durable authorization state is committed before execution authority is released;
+8. only `ALLOW` carrying the same action binding proceeds;
+9. a durable completion record is written as `STARTED` before adapter dispatch;
+10. the same immutable prepared object is dispatched;
+11. adapter return becomes `SUCCEEDED`; post-dispatch uncertainty becomes `OUTCOME_UNKNOWN`.
 
 `ESCALATE` is not authorization. `SIMULATE` may reach only a non-real-effect simulation path consistent with its profile.
+
+`OUTCOME_UNKNOWN` is not proof of failure and MUST NOT be treated as an automatic-retry signal. A deployment SHOULD reconcile against the target system or use service-specific idempotency/transaction mechanisms where available.
 
 ## 12. Fail-closed action behavior
 
 The following MUST NOT default to execution:
 
-- missing/malformed policy or request;
+- missing/malformed policy, lease, request, or capability contract;
 - expired, not-yet-valid, revoked, or unverifiable lease;
 - unknown credential or capability contract;
 - out-of-scope target/destination/parameter/effect;
 - replayed/stale request;
 - budget exhaustion;
-- uncertain durable state;
-- authorization/execution-binding mismatch.
+- uncertain durable authorization state;
+- authorization/execution-binding mismatch;
+- inability to persist the pre-dispatch completion `STARTED` record;
+- exhaustion of a declared bounded durable-state epoch.
+
+Post-dispatch uncertainty is not represented as a pre-dispatch denial; it is recorded as `OUTCOME_UNKNOWN`.
 
 ## 13. Transactional security state
 
@@ -135,14 +143,29 @@ An A2+ implementation with mutable replay/budget state MUST prevent concurrent a
 
 The reference uses a local SQLite transaction lock plus authenticated state reload/persist. Deployments may use different transactional mechanisms, but concurrent double spending of authority is non-conformant.
 
+The base reference retains complete replay/receipt/ancestry history for inspectability. `BoundedDurableEnforcementBroker` adds a finite epoch ceiling for long-lived use. Implementations MAY use compaction or external append-only logs, but MUST NOT silently discard replay/security evidence in a way that restores spent authority.
+
 ## 14. Rollback/fork evidence
 
 A higher-assurance A2/A4 implementation SHOULD retain rollback evidence outside the protected local state. A newer state presented against an older checkpoint must prove ancestry, not merely claim a larger generation number.
 
-## 15. Relationship to AMCS
+## 15. Portable machine representation
 
-AMCS remains a reference sealing/persistence protocol. AMCS 0.3.0 adds complete claimed v1.2.1 INTERNAL-profile surfaces, no-clobber sealed artifacts, content-root binding, optional HMAC root authentication, and generated-artifact conformance tests.
+Security-critical runtime fields SHOULD map to the fixed-width profile in `docs/PORTABLE_TYPES.md` / `include/amas/types.h`.
 
-## 16. Status
+Native pointer values, platform-width `long`/`size_t`, or `time_t` MUST NOT become normative wire semantics. Canonical JSON security integers are intentionally restricted to `±(2^53-1)` even when an implementation stores them in `int64_t`/`uint64_t`.
 
-This document is doctrine. Reference implementations demonstrate selected mechanics but do not establish production or frontier-model containment by themselves.
+## 16. Relationship to AMCS
+
+AMCS remains a reference sealing/persistence protocol.
+
+- `reference/amcs.py` is the low-level AMCS 0.3.3 archive/sealing engine.
+- `reference/amcs_runtime.py` is the supported schema-validating conformance entrypoint for current reference claims.
+- supported JSON message input is validated before sealing;
+- generated normative JSON surfaces are validated against repository Draft 2020-12 schemas before a conformance seal/verify is accepted.
+
+The current reference binds/copies an ODT but does not parse its document semantics into structured canonical narrative. Current supercell assembly verifies/bundles children but does not automate semantic contradiction discovery or cross-cell authority reconciliation. Those richer behaviors must not be implied by the existence of archive assembly.
+
+## 17. Status
+
+This document is doctrine. Reference implementations demonstrate selected mechanics but do not establish production certification or frontier-model containment by themselves.
