@@ -19,30 +19,22 @@
       "type": "object",
       "required": ["actions", "network_calls", "egress_bytes", "wall_clock_seconds"],
       "properties": {
-        "actions": {"type": "integer", "minimum": 0},
-        "network_calls": {"type": "integer", "minimum": 0},
-        "egress_bytes": {"type": "integer", "minimum": 0},
-        "wall_clock_seconds": {"type": "integer", "minimum": 0}
+        "actions": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "network_calls": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "egress_bytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "wall_clock_seconds": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
       },
       "additionalProperties": false
     },
-    "sequence": {"type": "integer", "minimum": 0},
+    "sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
     "previous_receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "allOf": [
-    {
-      "if": {"required": ["receipt_hash"]},
-      "then": {"required": ["sequence", "previous_receipt_hash"]}
-    },
-    {
-      "if": {"anyOf": [{"required": ["sequence"]}, {"required": ["previous_receipt_hash"]}]},
-      "then": {"required": ["receipt_hash", "sequence", "previous_receipt_hash"]}
-    },
-    {
-      "if": {"required": ["lease_id"]},
-      "then": {"required": ["authoritative_usage"]}
-    }
+    {"if": {"required": ["receipt_hash"]}, "then": {"required": ["sequence", "previous_receipt_hash"]}},
+    {"if": {"anyOf": [{"required": ["sequence"]}, {"required": ["previous_receipt_hash"]}]}, "then": {"required": ["receipt_hash", "sequence", "previous_receipt_hash"]}},
+    {"if": {"required": ["lease_id"]}, "then": {"required": ["authoritative_usage"]}},
+    {"if": {"required": ["execution_binding_hash"]}, "then": {"required": ["lease_id"]}}
   ],
   "additionalProperties": false
 }

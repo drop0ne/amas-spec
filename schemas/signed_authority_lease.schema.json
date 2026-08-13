@@ -2,18 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/amas/schemas/signed_authority_lease.json",
   "title": "AMAS AAB Signed Authority Lease",
+  "description": "Reference authenticated authority lease envelope with explicit version, key identity, not-before time, freshness window, policy, and signature.",
   "type": "object",
   "required": [
-    "lease_version",
-    "lease_id",
-    "issuer",
-    "key_id",
-    "issued_at",
-    "not_before",
-    "max_request_age_seconds",
-    "signature_alg",
-    "policy",
-    "signature"
+    "lease_version", "lease_id", "issuer", "key_id", "issued_at", "not_before",
+    "max_request_age_seconds", "signature_alg", "policy", "signature"
   ],
   "properties": {
     "lease_version": {"const": 1},
@@ -22,9 +15,9 @@
     "key_id": {"type": "string", "minLength": 1},
     "issued_at": {"type": "string", "format": "date-time"},
     "not_before": {"type": "string", "format": "date-time"},
-    "max_request_age_seconds": {"type": "integer", "minimum": 0},
+    "max_request_age_seconds": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
     "signature_alg": {"const": "HMAC-SHA256"},
-    "policy": {"$ref": "authority_policy.schema.json"},
+    "policy": {"$ref": "https://example.local/amas/schemas/authority_policy.json"},
     "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "additionalProperties": false

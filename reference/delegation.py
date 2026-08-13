@@ -2,12 +2,17 @@
 """AMAS AAB monotonic delegation verifier.
 
 Child authority must be a subset of parent authority across every security-
-relevant dimension, including adapter capability contracts.
+relevant dimension. A child binds both the parent policy ID and the exact
+Canonical JSON v1 parent-policy hash, preventing ID reuse from laundering a
+silently different authority set.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
+
+from canonical_json import CanonicalJSONError, MAX_SAFE_INTEGER, sha256 as canonical_sha256, validate as validate_canonical
 
 SIDE_EFFECT = {
     "observe": 0,
@@ -33,8 +38,22 @@ SET_FIELDS = (
     "capability_contracts",
 )
 
+CONTRACT_ID_RE = re.compile(r"^cap-sha256:[0-9a-f]{64}$")
+
+
+def canonical_policy_hash(policy: dict[str, Any]) -> str:
+    if not isinstance(policy, dict):
+        raise ValueError("policy must be an object")
+    try:
+        validate_canonical(policy)
+        return canonical_sha256(policy)
+    except CanonicalJSONError as exc:
+        raise ValueError("policy does not satisfy Canonical JSON v1") from exc
+
 
 def parse_time(value: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp must be a non-empty string")
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
     dt = datetime.fromisoformat(value)
@@ -43,37 +62,79 @@ def parse_time(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _subset(child: list[str], parent: list[str]) -> bool:
-    return set(child).issubset(set(parent))
+def _string_set(value: Any, name: str, *, contracts: bool = False) -> set[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be an array")
+    if any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"{name} must contain non-empty strings")
+    if len(value) != len(set(value)):
+        raise ValueError(f"{name} contains duplicates")
+    if contracts and any(not CONTRACT_ID_RE.fullmatch(item) for item in value):
+        raise ValueError("capability_contracts must be content-addressed IDs")
+    return set(value)
+
+
+def _budget_map(policy: dict[str, Any]) -> dict[str, int]:
+    budgets = policy["budgets"]
+    if not isinstance(budgets, dict) or set(budgets) != set(BUDGET_FIELDS):
+        raise ValueError("budgets must contain exactly the four authority budget fields")
+    out: dict[str, int] = {}
+    for field in BUDGET_FIELDS:
+        value = budgets[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > MAX_SAFE_INTEGER:
+            raise ValueError(f"invalid budget:{field}")
+        out[field] = value
+    return out
 
 
 def verify_child_policy(parent: dict[str, Any], child: dict[str, Any]) -> dict[str, Any]:
     """Verify monotonic authority narrowing. Fail closed on malformed input."""
     checks: list[tuple[str, bool]] = []
     try:
-        checks.append(("parent_binding", child["parent_policy_id"] == parent["policy_id"]))
-        checks.append(("principal_change_explicit", bool(child["principal"])))
+        if not isinstance(parent, dict) or not isinstance(child, dict):
+            raise ValueError("parent and child must be objects")
+        validate_canonical(parent)
+        validate_canonical(child)
+        parent_hash = canonical_policy_hash(parent)
+
+        if not isinstance(parent.get("policy_id"), str) or not parent["policy_id"]:
+            raise ValueError("parent policy_id")
+        if not isinstance(child.get("policy_id"), str) or not child["policy_id"]:
+            raise ValueError("child policy_id")
+        if child["policy_id"] == parent["policy_id"]:
+            raise ValueError("child policy_id must differ from parent")
+        if not isinstance(child.get("principal"), str) or not child["principal"]:
+            raise ValueError("child principal")
+
+        checks.append(("parent_id_binding", child.get("parent_policy_id") == parent["policy_id"]))
+        checks.append(("parent_hash_binding", child.get("parent_policy_hash") == parent_hash))
 
         for field in SET_FIELDS:
-            checks.append((f"subset:{field}", _subset(child.get(field, []), parent.get(field, []))))
+            parent_values = _string_set(parent.get(field, []), f"parent.{field}", contracts=field == "capability_contracts")
+            child_values = _string_set(child.get(field, []), f"child.{field}", contracts=field == "capability_contracts")
+            checks.append((f"subset:{field}", child_values.issubset(parent_values)))
 
         checks.append((
             "side_effect_narrowing",
             SIDE_EFFECT[child["max_side_effect"]] <= SIDE_EFFECT[parent["max_side_effect"]],
         ))
 
-        parent_budgets = parent["budgets"]
-        child_budgets = child["budgets"]
+        parent_budgets = _budget_map(parent)
+        child_budgets = _budget_map(child)
         for field in BUDGET_FIELDS:
             checks.append((f"budget:{field}", child_budgets[field] <= parent_budgets[field]))
 
         checks.append(("expiry_narrowing", parse_time(child["expires_at"]) <= parse_time(parent["expires_at"])))
 
-        parent_depth = int(parent.get("max_delegation_depth", 0))
-        child_depth = int(child.get("max_delegation_depth", 0))
+        parent_depth = parent.get("max_delegation_depth", 0)
+        child_depth = child.get("max_delegation_depth", 0)
+        if not isinstance(parent_depth, int) or isinstance(parent_depth, bool) or parent_depth < 0 or parent_depth > MAX_SAFE_INTEGER:
+            raise ValueError("invalid parent delegation depth")
+        if not isinstance(child_depth, int) or isinstance(child_depth, bool) or child_depth < 0 or child_depth > MAX_SAFE_INTEGER:
+            raise ValueError("invalid child delegation depth")
+        checks.append(("parent_may_delegate", parent_depth > 0))
         checks.append(("delegation_depth_remaining", parent_depth > 0 and child_depth <= parent_depth - 1))
-        if parent_depth <= 0:
-            checks.append(("parent_may_delegate", False))
+        checks.append(("no_child_operator_escalation", child.get("operator_escalation", False) is False))
 
         failed = [name for name, ok in checks if not ok]
         return {
@@ -81,21 +142,27 @@ def verify_child_policy(parent: dict[str, Any], child: dict[str, Any]) -> dict[s
             "reason": "authorized_subset" if not failed else failed[0],
             "failed_checks": failed,
             "checks": {name: ok for name, ok in checks},
+            "parent_policy_hash": parent_hash,
         }
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, CanonicalJSONError, RecursionError) as exc:
         return {
             "valid": False,
             "reason": f"invalid_policy:{type(exc).__name__}",
             "failed_checks": ["malformed_policy"],
             "checks": {},
+            "parent_policy_hash": None,
         }
 
 
 def derive_child_policy(parent: dict[str, Any], *, policy_id: str, principal: str, **overrides: Any) -> dict[str, Any]:
     """Create a child candidate by narrowing a parent, then verify it."""
+    if not isinstance(policy_id, str) or not policy_id or not isinstance(principal, str) or not principal:
+        raise ValueError("policy_id and principal must be non-empty strings")
+    parent_hash = canonical_policy_hash(parent)
     child = {
         "policy_id": policy_id,
         "parent_policy_id": parent["policy_id"],
+        "parent_policy_hash": parent_hash,
         "principal": principal,
         "objectives": list(parent.get("objectives", [])),
         "operations": list(parent.get("operations", [])),
@@ -109,8 +176,13 @@ def derive_child_policy(parent: dict[str, Any], *, policy_id: str, principal: st
         "expires_at": parent["expires_at"],
         "operator_escalation": False,
     }
+    protected = {"parent_policy_id", "parent_policy_hash"}
+    if protected & set(overrides):
+        raise ValueError("parent binding fields are derived and cannot be overridden")
     for key, value in overrides.items():
         if key == "budgets":
+            if not isinstance(value, dict):
+                raise ValueError("budgets override must be an object")
             child["budgets"] = {**child["budgets"], **value}
         else:
             child[key] = value

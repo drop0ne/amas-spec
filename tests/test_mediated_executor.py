@@ -7,28 +7,33 @@ ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "reference"
 sys.path.insert(0, str(REFERENCE))
 
+from capability_contract import bind_contract_id
 from enforcement_broker import EnforcementBroker, sign_lease
 from mediated_executor import MediatedExecutor, PreparedAction
 
 NOW = datetime(2026, 8, 12, 22, 30, tzinfo=timezone.utc)
 KEY = b"mediated-executor-test-key"
 
+CAPABILITY_CONTRACT = bind_contract_id({
+    "adapter_id": "mock",
+    "operation": "read",
+    "allowed_parameter_keys": ["path", "mode"],
+    "required_parameter_keys": ["path"],
+    "unrestricted_parameter_keys": [],
+    "parameter_allowlists": {"path": ["/record"], "mode": ["metadata"]},
+    "allowed_effective_destinations": ["sandbox://allowed"],
+    "allowed_credentials": ["read-token"],
+    "allow_redirects": False,
+    "allowed_filesystem_paths": [],
+    "allow_subprocess": False,
+    "allowed_subprocesses": [],
+    "allowed_secondary_destinations": [],
+})
+CAP_ID = CAPABILITY_CONTRACT["contract_id"]
+
 
 def capability_contract():
-    return {
-        "contract_id": "CAP-READ",
-        "adapter_id": "mock",
-        "operation": "read",
-        "allowed_parameter_keys": ["path", "mode"],
-        "required_parameter_keys": ["path"],
-        "parameter_allowlists": {"path": ["/record"], "mode": ["metadata"]},
-        "allowed_effective_destinations": ["sandbox://allowed"],
-        "allowed_credentials": ["read-token"],
-        "allow_redirects": False,
-        "allowed_filesystem_paths": [],
-        "allow_subprocess": False,
-        "allowed_secondary_destinations": [],
-    }
+    return dict(CAPABILITY_CONTRACT)
 
 
 def lease(max_network_calls=5, *, with_contract=False):
@@ -49,7 +54,7 @@ def lease(max_network_calls=5, *, with_contract=False):
             "targets": ["sandbox://allowed"],
             "destinations": ["sandbox://allowed"],
             "credentials": ["read-token"],
-            "capability_contracts": ["CAP-READ"] if with_contract else [],
+            "capability_contracts": [CAP_ID] if with_contract else [],
             "max_side_effect": "observe",
             "budgets": {
                 "max_actions": 10,
@@ -84,7 +89,7 @@ def request(seq=1, nonce="nonce-00000000001", target="sandbox://allowed", side_e
         "parameters": {"path": "/record", "mode": "metadata"},
     }
     if with_contract:
-        value["capability_contract_id"] = "CAP-READ"
+        value["capability_contract_id"] = CAP_ID
     return value
 
 
@@ -224,22 +229,22 @@ class MediatedExecutorTests(unittest.TestCase):
                 self.assertEqual(result["decision"], "DENY")
                 self.assertTrue(result["reason"].startswith("preparation_failed:"))
 
-    def test_valid_capability_contract_allows_execution(self):
-        adapter = MockAdapter()
-        executor = MediatedExecutor(
+    def _executor_with_contract(self, adapter):
+        return MediatedExecutor(
             EnforcementBroker(lease(with_contract=True), KEY),
             {"mock": adapter},
-            {"CAP-READ": capability_contract()},
+            {CAP_ID: capability_contract()},
         )
-        result = executor.execute(request(with_contract=True), now=NOW)
+
+    def test_valid_capability_contract_allows_execution(self):
+        adapter = MockAdapter()
+        result = self._executor_with_contract(adapter).execute(request(with_contract=True), now=NOW)
         self.assertEqual(result["decision"], "ALLOW")
         self.assertTrue(result["executed"])
 
     def test_contract_denies_unapproved_parameter_value(self):
         adapter = MockAdapter()
-        executor = MediatedExecutor(
-            EnforcementBroker(lease(with_contract=True), KEY), {"mock": adapter}, {"CAP-READ": capability_contract()}
-        )
+        executor = self._executor_with_contract(adapter)
         r = request(with_contract=True)
         r["parameters"]["path"] = "/etc/passwd"
         result = executor.execute(r, now=NOW)
@@ -253,10 +258,7 @@ class MediatedExecutorTests(unittest.TestCase):
             "subprocesses": [],
             "secondary_destinations": [],
         })
-        executor = MediatedExecutor(
-            EnforcementBroker(lease(with_contract=True), KEY), {"mock": adapter}, {"CAP-READ": capability_contract()}
-        )
-        result = executor.execute(request(with_contract=True), now=NOW)
+        result = self._executor_with_contract(adapter).execute(request(with_contract=True), now=NOW)
         self.assertEqual(result["decision"], "DENY")
         self.assertFalse(result["executed"])
 
@@ -269,18 +271,13 @@ class MediatedExecutorTests(unittest.TestCase):
         for effects in cases:
             with self.subTest(effects=effects):
                 adapter = MockAdapter(security_effects=effects)
-                executor = MediatedExecutor(
-                    EnforcementBroker(lease(with_contract=True), KEY), {"mock": adapter}, {"CAP-READ": capability_contract()}
-                )
-                result = executor.execute(request(with_contract=True), now=NOW)
+                result = self._executor_with_contract(adapter).execute(request(with_contract=True), now=NOW)
                 self.assertEqual(result["decision"], "DENY")
                 self.assertFalse(result["executed"])
 
     def test_contract_registry_requires_explicit_contract_id(self):
         adapter = MockAdapter()
-        executor = MediatedExecutor(
-            EnforcementBroker(lease(with_contract=True), KEY), {"mock": adapter}, {"CAP-READ": capability_contract()}
-        )
+        executor = self._executor_with_contract(adapter)
         result = executor.execute(request(with_contract=False), now=NOW)
         self.assertEqual(result["decision"], "DENY")
         self.assertFalse(result["executed"])

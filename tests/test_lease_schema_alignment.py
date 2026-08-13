@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "reference"
@@ -19,6 +20,19 @@ CAP_ID = "cap-sha256:" + "a" * 64
 
 def load_schema(name):
     return json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
+
+
+def local_registry():
+    registry = Registry()
+    for path in sorted(SCHEMAS.glob("*.json")):
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        schema_id = schema.get("$id")
+        if isinstance(schema_id, str):
+            registry = registry.with_resource(schema_id, Resource.from_contents(schema))
+    return registry
+
+
+REGISTRY = local_registry()
 
 
 def parent_policy():
@@ -64,6 +78,7 @@ class LeaseSchemaAlignmentTests(unittest.TestCase):
     def validate(self, schema_name, instance):
         Draft202012Validator(
             load_schema(schema_name),
+            registry=REGISTRY,
             format_checker=FormatChecker(),
         ).validate(instance)
 
