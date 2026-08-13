@@ -2,72 +2,88 @@
 
 ## Definition
 
-**Automated authority laundering** is the process by which consequential decisions are made through AI systems in a way that obscures who authorized the decision, at what level of authority, and through what chain of delegation.
+**Automated authority laundering** is the process by which consequential decisions or side effects are made through an AI system in a way that obscures who authorized them, at what authority level, for what scope, and through what chain of delegation or transition.
 
-The AI system functions as a pass-through that converts ambiguous, unauthorized, or low-authority instructions into apparently legitimate outputs. The authority to act was never formally delegated — it was laundered through the model's context window.
+The system converts ambiguous, unauthorized, inferred, retrieved, or merely reachable material into apparently legitimate behavior even though the required authority was never actually granted.
 
-## Why This Matters
+## Common mechanisms
 
-Traditional authority structures require traceable chains of delegation.
-AI systems break this chain when they combine system prompts, user input, retrieved documents, tool outputs, and prior model outputs without a formal authority model.
+### Data becomes instruction
+A retrieved document or tool result contains imperative language and is treated as a directive.
 
-## Active Failure Modes
+**AMAS response:** semantic role is independent of tier. Evidence/observation/inference does not become a directive through wording.
 
-**Example 1: Policy Override via Retrieval.** A RAG system retrieves a document that contains the phrase "disregard standard review procedures for this category." The model incorporates the instruction into its output, bypassing review. No human authorized the bypass — the authority was laundered through retrieval.
+### Inference becomes fact or delegation
+One model's synthesis is consumed downstream without retaining its inferential origin.
 
-**Example 2: Escalation Through Multi-Agent Pipelines.** Agent A produces an inference. Agent B consumes it as if it were ordinary session truth. By the time the recommendation reaches a human, the inferential origin is invisible.
+**AMAS response:** inference is Tier 3 and cannot directly authorize behavior.
 
-**Example 3: Accountability Diffusion in Automated Decisions.** A model combines multiple ambiguous sources and produces a recommendation. When challenged, the organization points to "the AI's assessment." The AI points to its inputs. No single source is visibly accountable.
+### Self-asserted supersession
+A newer same-tier object claims that it supersedes another and the runtime accepts the claim because the object contains a `supersedes` field.
 
-## How AMAS Addresses This
+**AMAS response:** provenance must be traceable and a trusted authority context outside the disputed object must verify that the issuer possessed authority over the superseded tier/scope. Metadata is not self-authentication.
 
-AMAS mitigates authority laundering through three familiar mechanisms:
+### Reachability becomes permission
+An agent discovers a host, credential, filesystem path, subprocess, plugin, or other capability and treats availability as authority.
 
-**Provenance tracking.** Every Memory Object carries source and authority metadata.
+**AAB response:** explicit leases, capability contracts, effective-action resolution, and external enforcement. Reachability is not authorization.
 
-**Tier enforcement.** Lower-tier sources cannot override higher-tier constraints.
+### “Authorize A, execute B”
+A policy gate approves one request but later code constructs a materially different effect.
 
-**Inference marking.** Model-generated conclusions remain visibly inferential unless explicitly escalated.
+**AAB response:** the trusted adapter prepares the effective immutable action first, and its exact hash is included in the broker's chained authorization receipt.
 
-## Why Runtime Binding Matters
+### Authorization becomes assumed completion
+An effect may occur but the response is lost. A caller treats the exception as proof of failure and retries, potentially duplicating the side effect.
 
-Provenance alone is not enough.
+**AAB response:** authorization and completion are different facts. The reference records `STARTED` before dispatch and then `SUCCEEDED` or `OUTCOME_UNKNOWN`. Uncertainty is not an automatic retry signal.
 
-Authority can still be laundered if runtime mechanics are opaque. A system may:
-- load ambiguous state during hydrate
-- silently normalize or repair state
-- export a bundle that appears more authoritative than the live state justified
-- allow derived artifacts to become practical truth surfaces
+### Durable state silently restores authority
+Restart, rollback, concurrency, or history deletion causes spent replay/budget authority to appear available again.
 
-For this reason, AMAS now distinguishes governance from runtime binding.
+**AAB response:** transaction-safe durable state, ancestry/checkpoints, and finite explicit epochs rather than silent history discard.
 
-The **runtime-binding seam** is part of the anti-laundering control surface because it makes the following visible:
+## Why provenance alone is insufficient
 
-- what canonical root was activated
-- which ledger was treated as writable
-- whether activation was authorized
-- whether state changed through append, repair, or export
-- what receipts and state hashes were emitted to the operator
+A provenance field can describe a claim while still being self-authored by an unauthorized object. Likewise, a decision receipt can record a policy decision while leaving the actual dispatch or completion ambiguous.
 
-Without this seam, provenance can exist on paper while operational authority still disappears into invisible middleware.
+Anti-laundering therefore requires several layers:
 
-## Residual Risk
+- **classification** — tier + semantic role;
+- **admission** — complete machine contract before authority decisions;
+- **transition authorization** — trusted verification for escalation/supersession/delegation;
+- **effective-action mediation** — evaluate what will actually happen, not only what the model said;
+- **transactional state** — replay/budgets cannot be reset or double spent;
+- **execution binding** — exact prepared action tied to authorization evidence;
+- **completion integrity** — uncertainty after dispatch remains visible;
+- **portable encoding** — independent implementations cannot reinterpret security values differently.
 
-AMAS does not eliminate all authority laundering. It addresses structural conditions that enable it, but cannot prevent:
+## Runtime-binding seam
 
-- authorized agents who intentionally misuse authority
-- compromised enforcement layers
-- incorrect Memory Object segmentation
-- operators who ignore runtime verification surfaces
+Runtime mechanics are part of the anti-laundering control surface because they expose:
 
-Authority laundering remains a governance problem first. AMAS provides technical infrastructure that makes governance auditable.
+- which canonical root activated;
+- which ledger was writable;
+- whether mutation/repair/export was authorized;
+- which conflict rule resolved an authority dispute;
+- whether supersession authority was externally verified;
+- what lease/policy/action binding governed a side effect;
+- what replay/budget state was authoritative;
+- whether an effect is `SUCCEEDED` or `OUTCOME_UNKNOWN`;
+- what state/checkpoint/receipt evidence is available to an operator.
 
-## Relationship to Existing Concepts
+Without this seam, provenance can exist on paper while operational authority disappears into middleware.
 
-Automated authority laundering is related to but distinct from:
+## Residual risk
 
-- **responsibility gaps**
-- **automation bias**
-- **principal-agent problems**
+AMAS/AAB cannot eliminate authority laundering caused by:
 
-The term describes a specific mechanism: authority is not merely diffused, but transformed through the model's context and runtime pipeline in a way that obscures who was ever authorized to decide.
+- compromise of a legitimately trusted authority or enforcement service;
+- malicious principals that genuinely possess the relevant authority;
+- incorrect Memory Object segmentation;
+- trusted adapters that misdescribe effects;
+- unmodeled equivalent-effect paths;
+- operators who ignore or suppress verification evidence;
+- remote systems that cannot support required reconciliation/idempotency semantics.
+
+The architecture's objective is not to make authority infallible. It is to make authority **explicit, bounded, machine-checkable, and reconstructable instead of inferred from model behavior after the fact.**
