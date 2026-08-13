@@ -1,164 +1,163 @@
-# AMAS / AAB / AMCS Reference Implementations
+# Reference Implementations
 
-**AMCS runtime:** 0.2.0  
-**AMCS specification implemented:** v1.2.1 INTERNAL profile  
-**AAB extension:** 0.4-draft reference components  
-**Language:** Python 3.11+  
-**Runtime dependencies:** Python standard library only
+The code in this directory is executable **reference material**, not a production security appliance. Each module demonstrates a bounded property of AMAS, AAB, or AMCS and is intentionally small enough for review.
 
-The `reference/` directory contains deliberately compact implementations of selected AMAS, AAB, and AMCS mechanisms. They are intended to make the specification falsifiable and reviewable. They are not production containment claims.
+## Current reference surfaces
 
-## AMCS — memory sealing and persistence
+### `conflict_resolution.py`
+Implements AMAS 2.0-draft pairwise arbitration with:
+- semantic-role admissibility (`DIRECTIVE` vs data/observation/inference);
+- tier precedence;
+- explicit supersession;
+- structural `scope_path` specificity;
+- recency;
+- unique fail-closed `HALT_ESCALATE` fallback.
 
-`amcs.py` converts supported chat transcripts into sealed, hash-verified memory-cell bundles with provenance and deterministic message identifiers.
+### `authority_gate.py`
+Stateless deny-by-default AAB policy evaluation over:
+- principal/objective/operation/target;
+- destination and credential scope;
+- capability-contract identity;
+- side-effect ceiling;
+- cumulative usage presented by a trusted broker;
+- delegation depth and policy expiry.
 
-```bash
-python3 reference/amcs.py seal \
-  --input examples/chat_minimal.json \
-  --out-dir out \
-  --cell-name MY_CELL
+It does not execute tools.
 
-python3 reference/amcs.py verify \
-  --cell out/MY_CELL.tar.gz
+### `enforcement_broker.py`
+Stateful AAB broker demonstrating:
+- authenticated HMAC reference leases;
+- lease version/key identity/not-before checks;
+- optional external revocation hook;
+- nonce replay protection and monotonic request sequence;
+- request freshness;
+- broker-owned cumulative budgets;
+- exact model-envelope and policy-evaluation hashes;
+- chained decision receipts;
+- exact `execution_binding_hash` inside the receipt chain.
+
+HMAC is used for reference portability only. Production keys must be protected outside the acting model.
+
+### `capability_contract.py`
+Validates adapter-specific security semantics that coarse operation/destination allowlists cannot express by themselves:
+- allowed/required parameter keys;
+- parameter value allowlists;
+- effective destinations and credentials;
+- redirect chains;
+- filesystem effects;
+- subprocess effects;
+- secondary network destinations.
+
+### `mediated_executor.py`
+Binds the actual prepared effect to authorization:
+
+```text
+model request
+  -> trusted adapter prepare
+  -> immutable PreparedAction
+  -> capability contract
+  -> SHA-256 action binding
+  -> broker decision containing same binding
+  -> only ALLOW + matching binding
+  -> same PreparedAction dispatched
 ```
 
-### AMCS 0.2.0 security boundary
+The trusted adapter remains part of the enforcement plane and must accurately report the effective action.
 
-The hardened runtime treats archive structure, attachment metadata, and output identifiers as security-sensitive inputs.
+### `durable_broker.py`
+Adds durable authoritative security state:
+- authenticated state envelope;
+- SQLite `BEGIN IMMEDIATE` transaction serialization for cooperating local broker processes;
+- reload-before-evaluate behavior;
+- persisted replay/cumulative budget/receipt state;
+- state generation, previous-state hash, and ancestry;
+- independently retained checkpoint comparison;
+- fail-closed persistence semantics.
 
-It therefore:
+This local reference design is not a distributed consensus or production key-management system.
 
-- restricts cell and supercell names to path-safe identifiers;
-- builds cells in temporary directories inside the selected output root;
-- refuses to seal a cell whose pre-seal verification fails;
-- manually validates tar members instead of using unrestricted `extractall`;
-- rejects absolute paths, `..` traversal, symlinks, hard links, devices, FIFOs, and unsupported archive members;
-- enforces configurable archive member-count and expanded-size limits;
-- requires message attachments to be relative to an explicit `--attachments-root`;
-- rejects attachment paths that escape that root;
-- verifies child cells before admitting them to a supercell;
-- checks manifest hashes, missing files, and unlisted files during verification.
+### `delegation.py`
+Verifies monotonic child policy derivation. A child cannot widen:
+- objectives;
+- operations;
+- targets;
+- destinations;
+- credentials;
+- capability-contract IDs;
+- side-effect ceiling;
+- budgets;
+- expiry;
+- delegation depth.
 
-The `--odt` argument remains an explicit operator-selected evidence file and is not interpreted as message-supplied attachment metadata.
+### `mediation_graph.py`
+Checks a declared architecture for broker bypass by removing broker nodes and testing agent→side-effect reachability. It returns deterministic shortest witness paths.
 
-AMCS provides memory provenance, sealing, integrity, rehydration evidence, and persistence mechanics. It is **not** an action sandbox or model-containment layer.
+This proves only the declared graph. Real A4 evaluation must enumerate actual equivalent-effect channels.
 
-## AAB policy gate
+### `receipt_chain.py`
+Creates/verifies SHA-256 chained decision receipts with explicit sequence and previous-receipt hash.
 
-`authority_gate.py` evaluates a proposed action against an explicit authority policy. It does not execute the action.
+### `amcs.py`
+AMCS reference runtime **0.3.0**, implementing the claimed AMCS v1.2.1 INTERNAL-profile surfaces with additional hardening:
+- full chat crawl and explicit prompt/response omission accounting;
+- required matrices/case files/case-study graph surfaces;
+- cell index, copied schemas, verification log, manifests and seal receipt;
+- cryptographic cell-root binding and optional HMAC root authentication;
+- delta lineage fields;
+- path-safe evidence collection;
+- bounded traversal-safe archive extraction;
+- immutable no-clobber cell/supercell creation;
+- child-cell verification before supercell assembly.
+
+## Run the suite
+
+From the repository root:
 
 ```bash
-python3 reference/authority_gate.py \
+python -m py_compile reference/*.py
+python -m unittest discover -s tests -v
+```
+
+Policy-gate demo:
+
+```bash
+python reference/authority_gate.py \
   --policy examples/authority_policy.json \
   --requests examples/action_requests.json
 ```
 
-The reference gate covers:
-
-- principal and objective binding;
-- operation and target scope;
-- destination/network scope;
-- credential scope;
-- side-effect ceilings;
-- action/network/egress/time budgets;
-- delegation depth;
-- policy expiry;
-- explicit operator escalation.
-
-## AAB enforcement broker
-
-`enforcement_broker.py` moves enforcement-critical state outside the acting model. It demonstrates:
-
-- authenticated reference authority leases;
-- nonce replay protection;
-- monotonic request sequencing;
-- request freshness checks;
-- broker-owned cumulative usage accounting;
-- broker-bound action cost metadata;
-- chained authorization receipts.
-
-The reference HMAC mechanism is intentionally compact. Production signing material must remain outside the model's trust boundary.
-
-## Authorization-to-execution binding
-
-`mediated_executor.py` addresses the gap between a correct `ALLOW` decision and the tool invocation that actually occurs.
-
-A trusted adapter first prepares the **effective** action—including the real operation, target, destination, credential reference, side-effect class, adapter parameters, and broker cost. AAB authorizes those effective fields, not merely the model's claimed fields. Only an `ALLOW` decision permits the same immutable `PreparedAction` object to reach the adapter's `execute()` method.
-
-The prepared descriptor receives a canonical SHA-256 action hash that is exposed as `execution_binding_hash` in the caller-visible authorization evidence.
-
-The reference executor also prevents adapter preparation from silently changing the request's lease ID, nonce, sequence, principal, objective ID, request ID, or timestamp.
-
-See [`../docs/EXECUTION_BINDING.md`](../docs/EXECUTION_BINDING.md).
-
-This is still an in-process reference. A production system must prevent direct access to the underlying adapter/tool and should combine execution binding with durable, transactional authorization state.
-
-## Durable enforcement state
-
-`durable_broker.py` adds AAB 0.4 reference mechanisms for:
-
-- persisted replay, sequence, usage, and receipt state;
-- authenticated state envelopes;
-- generation counters;
-- atomic replacement with `fsync`-based persistence;
-- restart recovery;
-- independently signable checkpoints;
-- detection of restoration behind a retained checkpoint.
-
-This is a reference persistence design, not a substitute for a transactional authorization service, HSM, remote transparency log, or equivalent production infrastructure.
-
-## Monotonic delegation
-
-`delegation.py` verifies that delegated child authority is a subset of parent authority across objectives, operations, targets, destinations, credentials, side effects, budgets, expiry, and delegation depth.
-
-The schema surface includes both:
-
-- `schemas/child_authority_policy.schema.json`; and
-- `schemas/signed_child_authority_lease.schema.json`.
-
-A child authority grant may narrow authority. Widening requires a new authority grant rather than delegation.
-
-## Mediation graph
-
-`mediation_graph.py` checks a declared topology for broker bypass.
-
-The verifier removes broker nodes and uses deterministic breadth-first reachability. If any modeled agent can still reach a side-effect sink, the topology fails and a shortest bypass witness is returned.
-
-This avoids enumerating every simple path and makes the structural test scale with graph size. It proves a property of the **declared graph only**; it does not prove that a deployment has enumerated every equivalent-effect path.
-
-## Receipt chain
-
-`receipt_chain.py` creates and verifies SHA-256-linked authorization receipts. Mutation and reordering inside an observed chain are detectable. A hash chain alone does not prevent complete chain truncation; stronger deployments require an independent anchor.
-
-## Tests
+AMCS round trip:
 
 ```bash
-python3 -m unittest discover -s tests -v
+python reference/amcs.py seal \
+  --input examples/chat_minimal.json \
+  --out-dir out \
+  --cell-name DEMO_CELL
+
+python reference/amcs.py verify --cell out/DEMO_CELL.tar.gz
 ```
 
-The test suite includes:
+Authenticated reference root:
 
-- policy and adversarial AAB vectors;
-- monotonic delegation checks;
-- enforcement-broker replay/budget tests;
-- authorization-to-execution binding tests;
-- durable restart/rollback tests;
-- mediation/bypass topology tests;
-- AMCS archive/filesystem boundary tests;
-- Draft 2020-12 JSON Schema validation.
-
-CI additionally performs an AMCS seal→verify round trip.
-
-## Separation of responsibilities
-
-- **AMAS Core** — contextual and memory authority doctrine.
-- **Runtime Binding** — lifecycle mechanics implementing AMAS governance.
-- **AMCS** — sealing, provenance, integrity, and memory persistence.
-- **AAB policy/enforcement components** — external action authorization and enforcement-state integrity.
-- **AAB mediated execution** — binding the authorized effective action to trusted adapter dispatch.
-
-Production AAB deployments still require complete mediation of relevant side effects, process isolation, network egress controls, least-privilege identities, secret isolation, controlled subprocess/plugin paths, transactional authorization state, independently protected evidence, and adversarial evaluation.
+```bash
+key=1111111111111111111111111111111111111111111111111111111111111111
+python reference/amcs.py seal \
+  --input examples/chat_minimal.json \
+  --out-dir out \
+  --cell-name AUTH_CELL \
+  --seal-key-hex "$key"
+python reference/amcs.py verify \
+  --cell out/AUTH_CELL.tar.gz \
+  --seal-key-hex "$key"
+```
 
 ## Evidence boundary
 
-Reference code demonstrates specific mechanisms under stated assumptions. It does **not** establish certified production conformance, complete side-effect mediation, or frontier-model containment.
+A passing test suite establishes only the properties exercised by those tests under their assumptions. It does not establish:
+- complete real-world mediation;
+- trusted-adapter correctness for arbitrary tools;
+- protection against compromise of the enforcement host or key services;
+- certified deployment conformance;
+- A4/frontier-model containment.
+
+See `SECURITY.md`, `CONFORMANCE_PROFILES.md`, and `docs/THREAT_MODEL.md` before making security claims.

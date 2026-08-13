@@ -1,144 +1,215 @@
-# AMAS Threat Model
+# AMAS / AAB / AMCS Threat Model
 
 ## Scope
 
-This document identifies threats AMAS Core, Runtime Binding, AMCS, and the Agent Authority Boundary (AAB) are designed to mitigate or constrain. AMAS is a governance and enforcement architecture, not a replacement for infrastructure security.
+This document identifies threats the current AMAS Core, Runtime Binding, AMCS, and AAB reference architecture are designed to mitigate or expose.
 
-## Context and memory threats
+AMAS/AAB is a governance/enforcement architecture, not a replacement for operating-system, network, hypervisor, hardware, or supply-chain security.
 
-### T1 — Tier impersonation / prompt injection
-Low-authority content impersonates a higher-authority source. Authority is assigned from source identity and ingestion metadata, not persuasive wording.
+## Context and memory authority threats
 
-### T2 — Implicit inference escalation
-Model-generated inference is treated as established authority. Tier 3 cannot silently promote itself.
+### T1 — Tier impersonation
+Low-authority content impersonates a higher-authority source. Authority is derived from trusted source/ingestion metadata, not wording.
 
-### T3 — Provenance opacity / authority laundering
-A consequential decision cannot be traced to an authorized source. AMAS requires provenance and explicit tier transitions.
+### T2 — Data-as-instruction / same-tier prompt injection
+Retrieved evidence, quoted material, or tool observations contain imperative text and are treated as directives merely because they share the same contextual tier as legitimate user/runtime material.
 
-### T4 — Canonical-root ambiguity
+**Mitigation:** AMAS 2.0-draft now separates `authority_tier` from `semantic_role`. `EVIDENCE`, `OBSERVATION`, and `INFERENCE` cannot directly authorize behavior. A non-directive → directive transition requires a new object created by an already-authorized issuer.
+
+**Residual risk:** incorrect or compromised ingestion/segmentation metadata can misclassify semantic role.
+
+### T3 — Implicit inference escalation
+Model-generated inference becomes established authority. Tier 3 is bound to `INFERENCE`; inference cannot be a direct directive.
+
+### T4 — Provenance opacity / authority laundering
+A consequential decision cannot be traced to an authorized source. AMAS requires explicit source, role, tier, scope, transition, and provenance surfaces.
+
+### T5 — Canonical-root ambiguity
 Multiple artifacts are treated as canonical. Core doctrine requires one canonical root proven unique before hydrate completes.
 
-### T5 — Writable truth-source drift
+### T6 — Writable truth-source drift
 Multiple writable truth surfaces emerge. Core doctrine permits one writable truth ledger for an active context.
 
-### T6 — Silent repair or mutation
-Infrastructure rewrites authoritative state without explicit receipt. Silent repair and silent chain-tip replacement are forbidden.
+### T7 — Silent repair or mutation
+Infrastructure rewrites authoritative state without an explicit receipt. Silent repair and silent canonical replacement are forbidden.
 
-### T7 — Derived artifacts gating reads
-Indexes, manifests, summaries, or rollups become de facto canon. Derived artifacts may summarize truth but may not define truth or gate canonical reads.
+### T8 — Derived artifacts become de facto canon
+Indexes, summaries, graphs, or rollups gate canonical reads or silently define truth. Derived artifacts may aid retrieval but cannot elevate authority or semantic role.
 
-### T8 — Receipt replay
-A valid but stale activation/export artifact is reused against newer state. Runtime bindings should verify freshness and state hashes.
+### T9 — Conflict-arbitration ambiguity
+Two conforming implementations choose different winners for identical authority conflicts.
 
-## Agent action threats
+**Mitigation:** structural `scope_path` specificity, specificity before recency, and one fail-closed Rule 5 result (`HALT_ESCALATE`).
 
-### T9 — Target substitution
-The agent substitutes a useful but unauthorized target. Explicit target scope denies this.
+## AMCS persistence threats
 
-### T10 — Destination / network expansion
-A reachable host, registry, API, or route is treated as permission. AAB separates reachability from authorization.
+### T10 — Archive traversal / special-file extraction
+A malicious cell archive writes outside the extraction root or creates links/devices/FIFOs.
 
-### T11 — Ambient credential use
-The agent discovers credentials not delegated for the action. Unlisted credentials fail closed.
+**Mitigation:** bounded manual extraction, path containment, duplicate-member rejection, and link/special-file rejection.
 
-### T12 — Privilege / side-effect expansion
-The agent escalates from observation/simulation to persistent or privileged change. AAB enforces an external side-effect ceiling.
+### T11 — Attachment-root escape
+Attachment metadata attempts absolute or `..` path escape.
 
-### T13 — Budget / rate expansion
-Intermediate success is used to justify continued activity. AAB binds action, network, egress, and wall-clock budgets.
+**Mitigation:** attachments require an explicit root and resolved descendants only.
 
-### T14 — Unauthorized delegation / sub-agent spawning
-Delegation is used to obtain broader effective capability. AAB requires monotonic child authority.
+### T12 — Artifact clobbering
+A new seal silently replaces an existing immutable cell or supercell.
 
-### T15 — Action laundering
-Model-generated rationale is treated as authorization. Authorization must derive from the external lease, not the model explanation.
+**Mitigation:** no-clobber exclusive archive creation; an existing destination causes failure.
 
-### T16 — Success-derived authority
-Unexpected success is treated as permission to continue. Success does not widen scope.
+### T13 — Partial/invalid seal published as authoritative
+Verification fails but an archive is still emitted.
+
+**Mitigation:** pre-seal and final verification are blocking; failure emits no final bundle.
+
+### T14 — Metadata/content rebinding
+Cell scope, canonical-source metadata, index information, or content manifest is changed independently.
+
+**Mitigation:** `cell_root.json` cryptographically binds the content-manifest hash, seal-receipt hash, and cell-index hash. Optional HMAC root authentication is available in the reference implementation.
+
+**Residual risk:** an unauthenticated root can be recomputed by an attacker. Production authenticity requires a protected signing/anchoring key or external trust service.
+
+### T15 — Prompt/response omission
+A user prompt disappears from causality accounting.
+
+**Mitigation:** every user prompt must be mapped to a response or explicitly marked `no_response_required`; unresolved prompts block sealing.
+
+### T16 — Schema/runtime drift
+Generated artifacts violate the repository's own schemas while CI remains green.
+
+**Mitigation:** generated-cell conformance tests validate prompt log, response map, case-study graph, cell index, seal receipt, cell root, and supercell manifest against Draft 2020-12 schemas.
+
+## Agent action authority threats
+
+### T17 — Objective / target substitution
+The agent replaces the authorized task or target with a useful but unauthorized one.
+
+**Mitigation:** explicit objective/target scope plus effective adapter resolution.
+
+### T18 — Destination / network expansion
+A reachable host/API/proxy is treated as permission.
+
+**Mitigation:** destination allowlists and capability-contract effective-destination rules.
+
+### T19 — Ambient credential use
+The agent discovers credentials not delegated for the action.
+
+**Mitigation:** explicit credential scope in policy and capability contract.
+
+### T20 — Privilege / side-effect expansion
+An operation expands from observation/simulation to persistent or privileged change.
+
+**Mitigation:** externally enforced side-effect ceiling based on the effective prepared action.
+
+### T21 — Parameter/effect smuggling through an allowed operation
+The operation/destination is nominally allowed but parameters induce local-file access, redirects, subprocesses, or secondary network effects.
+
+**Mitigation:** adapter-specific capability contracts constrain allowed parameter keys/values and declared security effects.
+
+**Residual risk:** the trusted adapter must correctly model the effect semantics that matter for its tool/protocol.
+
+### T22 — Budget/rate expansion
+Intermediate success or repeated requests exceed delegated action/network/egress/time budgets.
+
+**Mitigation:** broker-owned cumulative counters and deny-by-default budget checks.
+
+### T23 — Unauthorized delegation / sub-agent widening
+Delegation creates a child with broader effective capability.
+
+**Mitigation:** machine-verified subset relations include objectives, operations, targets, destinations, credentials, capability contracts, side effects, budgets, expiry, and depth.
+
+### T24 — Success-derived authority
+An unexpected successful action is treated as permission to continue or broaden scope.
+
+**Mitigation:** success is not an authority transition.
+
+### T25 — Action laundering through model rationale
+A model explanation/recommendation is treated as authorization.
+
+**Mitigation:** authorization derives from the external lease/policy, not model-generated rationale.
 
 ## Enforcement-path threats
 
-### T17 — Authority-lease tampering
-Targets, credentials, budgets, ceilings, or expiry are edited after grant. AAB 0.3 authenticates the reference lease envelope.
+### T26 — Lease tampering
+Targets, budgets, credentials, validity windows, or other lease fields are changed after issuance.
 
-Residual risk: the reference HMAC mechanism is demonstrative; production key authority should remain outside the model environment.
+**Mitigation:** authenticated lease envelope; production keys must remain outside model reach.
 
-### T18 — Action-request replay
-A previously valid request is submitted again. AAB uses nonces, monotonic sequences, and freshness windows.
+### T27 — Premature / revoked lease use
+A correctly signed lease is used before its validity window or after an emergency revocation.
 
-### T19 — Agent-supplied budget spoofing
-The agent reports lower usage to regain budget. AAB 0.3 moves cumulative accounting to broker-owned state.
+**Mitigation:** `not_before`, policy expiry, and external revocation hook.
 
-Residual risk: the broker/tool adapter must measure or conservatively reserve real action cost.
+**Residual risk:** production revocation availability/integrity is deployment-specific.
 
-### T20 — Stale / future request acceptance
-Old envelopes are replayed or time metadata is manipulated. The broker enforces freshness and rejects materially future-dated requests.
+### T28 — Action-request replay
+A prior valid request is reused.
 
-Residual risk: broker clock integrity is an infrastructure dependency.
+**Mitigation:** minimum-format nonce, nonce uniqueness, exact monotonic request sequence, and freshness window.
 
-### T21 — Authorization-log mutation / reordering
-Decision records are edited to obscure broker behavior. Receipt chaining detects mutation and reordering in an observed chain.
+### T29 — Agent-supplied budget spoofing
+The agent reports lower usage to regain budget.
 
-Residual risk: hash chaining alone does not prove the complete chain has not been truncated.
+**Mitigation:** authoritative usage is broker-owned; adapter cost is trusted enforcement metadata.
 
-### T22 — Enforcement-path bypass
-The agent reaches a tool, credential, subprocess, network interface, service, or equivalent-effect channel without traversing AAB.
+### T30 — Authorization-to-execution substitution
+The broker authorizes one action but the caller/adapter later dispatches another.
 
-AAB cannot solve this in policy code alone. Strong containment requires architecture-level mediation and conventional isolation controls.
+**Mitigation:** immutable `PreparedAction`; exact SHA-256 action hash is passed to the broker and included inside the chained decision receipt; dispatch requires a matching binding hash.
 
-## AAB 0.4 durability and topology threats
+### T31 — Decision-log mutation / reordering
+Receipts are edited to obscure broker behavior.
 
-### T23 — Broker restart resets authority state
-A broker process restarts and loses consumed nonces, sequence state, budgets, or receipt history. The agent can then replay old requests or regain spent authority.
+**Mitigation:** monotonic SHA-256 receipt chain.
 
-**AAB 0.4 mitigation:** authenticated durable broker state persists replay state, counters, request sequence, and receipt history. Restart restoration verifies the state envelope and receipt chain.
+**Residual risk:** a local chain alone cannot prove non-truncation; external checkpoint/anchoring is complementary.
 
-**Residual risk:** durability depends on the correctness and availability of the persistence layer. Authorization must fail closed if persistence fails.
+### T32 — Restart resets authority state
+Restart loses nonces, sequence, counters, or receipts.
 
-### T24 — Rollback to an older but valid broker state
-An attacker restores an older state object that still has a valid integrity MAC. Local integrity verification accepts the object even though it represents previously consumed authority.
+**Mitigation:** authenticated durable broker state.
 
-**AAB 0.4 mitigation:** an independently retained signed checkpoint records state generation, state hash, and receipt-chain tip. Restored state older than the checkpoint, or equal-generation state with a different hash/tip, fails closed.
+### T33 — Concurrent double spending of authority
+Two broker instances authorize against the same stale budget/sequence snapshot.
 
-**Residual risk:** a checkpoint stored in the same compromise domain can be rolled back with the state. High-assurance deployments must anchor it in an independent failure domain.
+**Mitigation:** reference state version 2 uses a SQLite `BEGIN IMMEDIATE` sidecar transaction; each authorization reloads the newest authenticated state under lock before evaluation.
 
-### T25 — Incomplete mediation topology
-The documented architecture shows all known side effects crossing AAB, but an omitted alternate adapter, proxy, RPC channel, plugin, subprocess, credential path, or equivalent-effect sink remains available.
+**Residual risk:** this is a local reference transaction model, not a distributed-consensus design.
 
-**AAB 0.4 mitigation:** `reference/mediation_graph.py` rejects any *modeled* agent→side-effect path that does not include a broker, and the bypass corpus tests common topology errors.
+### T34 — Rollback to an older authenticated state
+An older state with a valid MAC restores spent authority.
 
-**Residual risk:** structural graph verification is only as complete as the declared graph. A4 requires architecture-specific enumeration and empirical testing against the real environment.
+**Mitigation:** independently retained checkpoint comparing generation, state hash, receipt count, and receipt tip.
 
-### T26 — Checkpoint / state evidence tampering
-An attacker edits a persisted state envelope or checkpoint.
+### T35 — Higher-generation divergent fork
+An attacker presents a state with a larger generation that is not descended from the checkpointed state.
 
-**AAB 0.4 mitigation:** both state and checkpoint records are integrity protected in the reference implementation; receipt chains are reverified during restoration.
+**Mitigation:** state v2 records explicit state-hash ancestry; higher-generation restoration must prove checkpoint ancestry and receipt-chain extension.
 
-**Residual risk:** compromise of integrity keys invalidates this assurance.
+### T36 — Incomplete mediation topology
+An alternate adapter, proxy, plugin, subprocess, RPC, network route, credential path, collaborating agent, or equivalent-effect sink bypasses AAB.
 
-## Partially addressed
+**Mitigation:** structural broker-removal reachability test over the declared graph, plus architecture-specific empirical evaluation for A4.
 
-### T27 — Multi-agent authority negotiation
-Monotonic delegation is implemented, but the repository does not yet define a complete distributed negotiation protocol covering mutually distrustful agents, revocation propagation, partial failures, or cross-provider identity.
+**Residual risk:** the topology proof is only as complete as the real capability enumeration.
 
-### T28 — Stale authority due to real-world change
-Expiry constrains stale leases, but determining when external circumstances invalidate an otherwise unexpired grant remains deployment-specific.
+### T37 — Compromised enforcement plane
+The broker, trusted adapter, sandbox boundary, credential service, signing/revocation/checkpoint service, OS, or equivalent enforcement component is compromised.
 
-### T29 — Compromised enforcement plane
-If the broker, policy service, sandbox boundary, credential broker, signing/checkpoint service, or equivalent enforcement component is compromised, the model may act outside AMAS.
+AAB cannot recover containment after the trusted boundary itself is lost.
 
-## Outside scope / complementary controls
+## Partially addressed / future work
 
-- compromised Tier 0/platform channel
-- malicious actors legitimately holding sufficient authority
-- model-weight or training-data compromise
-- hardware/firmware compromise
-- side channels outside the instrumented action path
-- vulnerabilities in enforcement components themselves
-- physical effects the deployment cannot observe or mediate
+### T38 — Multi-agent authority negotiation and revocation propagation
+Monotonic delegation exists, but cross-provider identity, mutually distrustful principals, distributed revocation, and partial-failure semantics remain incomplete.
 
-Production deployments should combine AMAS/AAB with least privilege, process isolation, egress filtering, secret isolation, durable replay state, independent checkpoint anchoring, tamper-evident logs, monitoring, and incident response.
+### T39 — Real-world change invalidates an unexpired grant
+Expiry/revocation provide mechanisms, but determining when external circumstances invalidate authority is deployment-specific.
+
+### T40 — Information-flow confidentiality
+Egress-byte budgets and destination restrictions constrain some channels but do not by themselves implement taint tracking, secret classification, or noninterference. High-assurance deployments should add secret isolation and information-flow controls appropriate to the system.
 
 ## Evidence discipline
 
-The existence of AAB documentation or reference code is not evidence that a deployment contains a frontier agent. Containment claims require architecture-specific adversarial testing, a reviewable mediation topology, evidence that restart/rollback cannot restore spent authority, and reproducible results showing the evaluated agent cannot exercise an equivalent unmediated path.
+The existence of AMAS/AAB documentation or reference code is not evidence that a deployment contains a frontier agent. Containment claims require architecture-specific adversarial testing, reviewable real topology, trusted adapter/effect modeling, authoritative transactional state, rollback/fork evidence, and reproducible results.

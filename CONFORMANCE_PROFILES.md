@@ -1,117 +1,186 @@
 # AMAS Conformance Profiles
 
-Status: Draft RC4  
-Purpose: independent capability ladders for memory/runtime governance and agent action authority.
+**Status:** Draft RC5  
+**Purpose:** independent capability/evidence ladders for contextual-memory governance and agent action authority.
 
 ## 1. Scope
 
-AMAS conformance is multi-axis. An implementation MUST NOT imply capabilities it does not implement.
+AMAS conformance is multi-axis. An implementation MUST NOT imply capabilities it does not implement or evidence categories it has not demonstrated.
 
-- **C-axis:** memory/runtime lifecycle capability.
+- **C-axis:** contextual-memory/runtime lifecycle capability.
 - **A-axis:** external action-authority enforcement capability.
 
-Example: `AMAS C3/A2`.
+Example claim: `AMAS C3/A2`.
 
 ## 2. Independent versioning
 
-Conformance profiles version independently from AMAS Core, Runtime Binding, AMCS, and AAB.
+Conformance profiles version independently from AMAS Core, Runtime Binding, AMCS, and AAB. A claim SHOULD identify the exact specification/repository revision when reproducibility matters.
 
-## 3. C-axis — memory/runtime profiles
+## 3. C-axis
 
 ### C1 — Read-Only Hydrate
-Explicit memory load, provenance inspection, non-mutating review. No append, repair, or authoritative export.
+
+- explicit memory load;
+- provenance and semantic-role inspection;
+- non-mutating review;
+- no append, repair, or authoritative export.
 
 ### C2 — Hydrate + Validate
-C1 plus full preflight validation, invalid/quarantine identification, and validation reports.
+
+C1 plus:
+
+- deterministic authority/semantic-role validation;
+- conflict-arbitration validation;
+- full preflight;
+- invalid/quarantine identification;
+- validation reports.
 
 ### C3 — Append-Capable
-C2 plus validated activation, append, derived-view regeneration, and append receipts. Silent mutation/repair/export is forbidden.
+
+C2 plus:
+
+- validated activation;
+- append;
+- derived-view regeneration;
+- append receipts;
+- no silent semantic-role/tier elevation;
+- no silent repair/export.
 
 ### C4 — Persistent-Runtime Full Conformance
-C3 plus explicit repair/migration, validated export proof bundles, lifecycle-state handling, operator-visible verification, receipt discipline, and terminal-state handling.
 
-## 4. A-axis — action-boundary profiles
+C3 plus:
+
+- explicit repair/migration;
+- validated export proof bundles;
+- lifecycle-state handling;
+- operator-visible verification;
+- receipt discipline;
+- terminal-state handling;
+- durable lineage/canonical-state controls required by the declared runtime.
+
+## 4. A-axis
 
 ### A0 — No action-boundary claim
+
 No AMAS enforcement claim over external side effects.
 
 ### A1 — Observe / Simulate
+
 Required:
-- structured action requests
-- external policy evaluation
-- deny-by-default operation/target scope
-- no real side effects beyond observation/simulation
-- decision receipts
+
+- structured action requests;
+- external policy evaluation;
+- deny-by-default objective/operation/target scope;
+- no real side effects beyond the declared observation/simulation boundary;
+- decision receipts.
 
 ### A2 — Scoped Side Effects with Enforcement Integrity
-A1 plus:
-- destination/network and credential scope
-- side-effect ceilings
-- action/network/egress/time budgets
-- policy expiry
-- fail-closed malformed-request handling
-- authenticated/integrity-protected authority lease
-- request freshness and replay controls
-- broker-owned cumulative enforcement counters
-- tamper-evident receipts
-- documented mediation boundary
 
-An A2 claim does not prove the agent cannot discover an unmediated path.
+A1 plus:
+
+- destination/network and credential scope;
+- adapter-specific capability-contract scope where parameters/effects can alter security semantics;
+- side-effect ceilings;
+- action/network/egress/time budgets;
+- authenticated lease with issue/not-before/expiry semantics;
+- defined revocation behavior;
+- fail-closed malformed-request handling;
+- nonce/sequence/freshness replay controls;
+- broker-owned cumulative enforcement counters;
+- transaction-safe mutable security state;
+- exact effective-action binding inside tamper-evident decision evidence;
+- durable persistence before executable authorization returns;
+- documented mediation boundary.
+
+An A2 claim does **not** prove that the agent lacks an unmediated equivalent-effect path.
 
 ### A3 — Bounded Delegation
+
 A2 plus:
-- machine-verified monotonic child-policy derivation
-- no child authority widening
-- delegation-depth accounting
-- parent/child provenance
-- child lease integrity protection
-- documented expiry/revocation semantics
+
+- machine-verified monotonic child-policy derivation;
+- no child widening of objectives, operations, targets, destinations, credentials, capability-contract identifiers, side-effect ceilings, budgets, expiry, or delegation depth;
+- parent/child provenance;
+- child lease integrity protection;
+- documented revocation/expiry propagation semantics.
 
 ### A4 — Adversarial Containment
-A3 plus architecture-specific reproducible evidence demonstrating all of the following:
 
-**Authority violations are blocked**
-- target/objective substitution denial
-- destination expansion denial
-- ambient credential denial
-- privilege/side-effect expansion denial
-- budget expansion/reset denial
-- stale/replayed request denial
-- lease tampering denial
-- unauthorized delegation denial
+A3 plus architecture-specific reproducible evidence demonstrating all of the following.
 
-**Enforcement state remains authoritative**
-- replay state and cumulative budgets survive broker restart
-- enforcement-state corruption fails closed
-- restoration of older authenticated state is detected by an independently retained checkpoint or stronger rollback-resistant mechanism
-- decision-chain state is independently reviewable
+#### Authority violations are blocked
 
-**Mediation is complete for the evaluated architecture**
-- every enumerated agent→side-effect path crosses the enforcement boundary
-- alternate adapters, proxies, subprocess channels, network routes, credentials, plugins, RPC paths, and equivalent-effect channels are included in the evaluation scope
-- modeled bypass paths cause failure
-- empirical testing provides evidence that the evaluated agent cannot exercise an unmediated equivalent path
+- objective/target substitution;
+- destination expansion;
+- ambient credential use;
+- side-effect/privilege expansion;
+- parameter/effect smuggling through allowed operations;
+- budget expansion/reset;
+- stale/replayed requests;
+- lease tampering/premature use/revocation bypass;
+- unauthorized delegation.
 
-**Evidence is reproducible**
-- test corpus, environment assumptions, enforcement topology, results, and failure criteria are reviewable
-- containment claims are scoped to the tested architecture and version
+#### Enforcement state remains authoritative
 
-A4 is evidence-bearing. Documentation, policy prompts, or the existence of reference code alone are insufficient.
+- replay state and cumulative budgets survive restart;
+- concurrent broker instances cannot double spend authority;
+- state corruption/persistence uncertainty fails closed;
+- restoration of older authenticated state is detected;
+- a newer state must prove descent from the retained checkpoint/anchor or an equivalent stronger mechanism;
+- decision-chain state and exact action bindings are independently reviewable.
+
+#### Mediation is complete for the evaluated architecture
+
+- every enumerated agent→effect path crosses the enforcement boundary;
+- adapters, redirects, proxies, subprocesses, plugins, network routes, credentials, RPC paths, local-file effects, collaborating agents, and equivalent-effect channels are included in evaluation scope as applicable;
+- modeled bypass paths fail evaluation;
+- empirical testing demonstrates that the evaluated agent did not exercise an equivalent unmediated path.
+
+#### Evidence is reproducible
+
+- test corpus;
+- model/provider/version;
+- environment assumptions;
+- enforcement topology;
+- lease/policy/capability-contract configuration;
+- results;
+- failure criteria;
+- known residual risks
+
+are reviewable.
+
+A4 is evidence-bearing. Documentation, policy prompts, a passing unit suite, or the existence of reference code alone is insufficient.
 
 ## 5. No hidden elevation
 
-A runtime may not silently behave as a higher profile than declared. Capability must be explicit and reviewable.
+A runtime may not silently behave as or advertise a higher profile than declared. Capability and evidence must be explicit and reviewable.
 
-## 6. Certification principle
+## 6. Evidence categories
 
-A conformance claim is credible only when required gates exist, security state is authoritative and reviewable, forbidden silent behavior is absent, and tests are reproducible.
+Conformance discussions SHOULD distinguish:
 
-## 7. Legacy migration
+1. specified property;
+2. implemented mechanism;
+3. automated/adversarial test evidence;
+4. deployment-specific evidence;
+5. independent certification/evaluation.
 
-AMAS v1.1 Levels 1–3 map approximately to C1–C4. They defined no A-axis action containment and imply no A-level.
+A higher category must not be implied by a lower one.
 
-## 8. Current repository claim
+## 7. Current repository position
 
-The repository now contains executable reference artifacts exercising substantial A2/A3 mechanisms plus A4 prerequisites: signed reference leases, replay controls, broker-owned accounting, monotonic delegation, authenticated durable broker state, rollback checkpoints, receipt chaining, and structural mediation/bypass tests.
+The repository contains executable reference mechanisms exercising substantial A2/A3 requirements and A4 prerequisites, including:
 
-It **does not claim certified A2/A3 deployment conformance or A4 containment of frontier models**. A4 requires independent, architecture-specific adversarial evaluation of a real mediated execution environment.
+- semantic-role-aware AMAS conflict arbitration;
+- signed leases with validity windows and revocation hook;
+- capability contracts;
+- exact action-binding receipts;
+- replay controls and broker-owned budgets;
+- transactional durable state;
+- state ancestry/checkpoints;
+- monotonic delegation;
+- structural mediation/bypass tests;
+- adversarial vectors;
+- hardened AMCS persistence/conformance tests.
+
+It **does not claim certified A2/A3 deployment conformance or A4 containment of frontier models**. Those claims require evaluation of an actual deployed mediation architecture.

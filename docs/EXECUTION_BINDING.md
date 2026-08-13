@@ -1,30 +1,33 @@
 # AAB Authorization-to-Execution Binding
 
-**Status:** Experimental reference hardening for AAB 0.4  
-**Reference:** `reference/mediated_executor.py`
+**Status:** Experimental reference hardening for AAB 0.4.1  
+**References:** `reference/mediated_executor.py`, `reference/capability_contract.py`
 
 ## Problem
 
-An authorization system can correctly decide that an action is allowed and still fail if the subsequent tool invocation is not the exact action that was evaluated.
+A correct policy decision is insufficient if the later tool call is not the exact action that was evaluated.
 
-A weak path looks like:
+A weak flow is:
 
 ```text
-model request -> policy decision -> ALLOW -> caller constructs tool call -> side effect
+model request -> ALLOW -> caller constructs/modifies invocation -> side effect
 ```
 
-The gap between `ALLOW` and the real invocation can permit target substitution, destination changes, credential changes, side-effect escalation, cost under-reporting, or ordinary adapter bugs.
+That gap can permit target, destination, credential, parameter, side-effect, or cost substitution after authorization.
 
-## Required distinction
+A second problem is coarse authorization: even when operation and destination are allowed, malicious or unsafe parameters can make the allowed surface perform a different security-relevant effect.
 
-AAB therefore distinguishes:
+## Required distinctions
 
-- **requested action** — what the acting model says it wants to do;
-- **effective action** — what the trusted tool adapter resolves and is actually prepared to do;
-- **authorized action** — the effective action accepted by the AAB broker;
-- **executed action** — the same prepared object passed to the adapter after authorization.
+AAB distinguishes:
 
-Authorization MUST be based on the effective action, not solely on model-declared fields.
+- **requested action** — model-declared intent;
+- **effective action** — adapter-resolved operation/effect;
+- **contracted action** — effective action that satisfies the adapter capability contract;
+- **authorized action** — contracted effective action accepted by AAB;
+- **executed action** — the same immutable prepared descriptor dispatched after authorization.
+
+Authorization MUST be based on the effective/contracted action, not solely on model-declared fields.
 
 ## Reference flow
 
@@ -32,124 +35,151 @@ Authorization MUST be based on the effective action, not solely on model-declare
 MODEL / AGENT
      |
      v
-requested action + adapter id
+request + adapter ID
      |
      v
 TRUSTED ADAPTER.prepare()
      |
-     +-- resolves effective operation / target / destination
-     +-- resolves credential reference / side-effect class
-     +-- binds trusted cost
+     +-- resolve operation / target / destination
+     +-- resolve credential / side-effect class
+     +-- bind trusted cost
+     +-- expose security effects
      |
      v
 immutable PreparedAction
      |
-     +-- canonical action hash
+     +-- capability-contract validation
+     +-- canonical SHA-256 action hash
      |
      v
-AAB BROKER.authorize(effective request, trusted cost)
+AAB BROKER.authorize(..., execution_binding_hash=hash)
      |
-   DENY ---------------------> no execution
+     +-- receipt chain covers exact action hash
      |
-   ALLOW
+   DENY ----------------------> no execution
+     |
+   ALLOW + same binding hash
      |
      v
-same PreparedAction object
+same PreparedAction
      |
      v
 TRUSTED ADAPTER.execute()
-     |
-     v
-execution result + action hash
 ```
 
-## Envelope invariants
+## Bound authority/replay envelope
 
-A trusted adapter may resolve fields describing the real effect, but it MUST NOT silently change the authority/replay identity of the request.
+Adapter preparation may resolve effective effect fields but MUST NOT silently change:
 
-The reference executor therefore binds these fields to the original request:
-
-- request ID
-- lease ID
-- nonce
-- monotonic sequence
-- principal
-- objective ID
-- request timestamp
+- request ID;
+- lease ID;
+- nonce;
+- monotonic sequence;
+- principal;
+- objective ID;
+- request timestamp.
 
 A mismatch fails before authorization.
 
 ## Effective-action fields
 
-The adapter is permitted—and expected—to resolve the actual values that policy must evaluate, including:
+The adapter is expected to resolve the real values policy must evaluate:
 
-- operation
-- target
-- destination
-- credential reference
-- side-effect class
-- broker cost
-- adapter-specific parameters
+- operation;
+- target;
+- effective destination;
+- credential reference;
+- side-effect class;
+- broker cost;
+- adapter parameters;
+- security-relevant secondary effects.
 
-If resolution produces a value outside the authority lease, AAB denies the action even when the model's original request claimed an in-scope value.
+If preparation resolves an out-of-scope value, AAB denies even if the original model request claimed an allowed value.
 
-## Execution binding hash
+## Capability contracts
 
-The reference computes a SHA-256 hash over canonical JSON containing:
+`reference/capability_contract.py` constrains an adapter operation more finely than destination/operation allowlists alone.
 
-- adapter identity
-- effective broker request
-- adapter parameters
-- trusted cost
+A contract can restrict:
 
-The caller-visible authorization receipt exposes this as `execution_binding_hash`. The same immutable `PreparedAction` is then passed to the adapter's `execute()` method.
+- parameter keys;
+- required parameters;
+- explicit parameter value sets;
+- effective destination;
+- credential;
+- redirects;
+- filesystem paths;
+- subprocess creation;
+- secondary destinations.
 
-This hash is an evidence binding. It does not itself create isolation or prove that the adapter implementation performed the claimed physical/network effect.
+The reference uses deny-by-default semantics for these declared effect classes.
 
-## Trust boundary
+This does not automatically understand arbitrary program semantics. The trusted adapter must accurately describe the effective operation and its security effects. Architecture-specific adapters can extend the contract model with additional effect classes where needed.
 
-`MediatedExecutor` is an in-process reference mechanism. It assumes:
+## Deep immutability
 
-1. the adapter is part of the trusted enforcement plane;
-2. the acting model cannot invoke the underlying tool or credential through another path;
-3. adapter `prepare()` accurately resolves the effective action and cost;
-4. adapter `execute()` operates on the prepared object it receives;
-5. the authorization broker's state and decision are authoritative.
+`PreparedAction` serializes the complete canonical descriptor at construction and returns detached copies of nested values. Caller or adapter mutation of source dictionaries/lists cannot change the already-hashed action.
 
-A production system SHOULD place preparation, authorization, and dispatch inside the same privileged mediation service or capability broker rather than returning a general-purpose `ALLOW` result to untrusted application code.
+The canonical hash covers:
+
+- adapter identity;
+- effective broker request;
+- adapter parameters;
+- trusted cost;
+- declared security effects.
+
+## Receipt binding
+
+The action hash is passed into the broker before decision-receipt construction. The hash is therefore inside the broker's chained receipt.
+
+The executor refuses dispatch when the returned receipt does not contain the exact same binding hash, even if the receipt otherwise says `ALLOW`.
+
+This closes the earlier evidence gap where caller code appended an execution hash after receipt chaining.
 
 ## Durable authorization
 
-For real side effects, authorization state should be durable before the effect occurs. The AAB 0.4 durable broker follows this principle by persisting the authorization decision before returning successfully.
+For real effects, authorization state should be durable before the effect occurs. `DurableEnforcementBroker` persists the decision transition before returning successfully and serializes cooperating broker processes through a transaction lock.
 
-The reference `MediatedExecutor` accepts the broker protocol so tests can use the smaller broker. A production profile should combine execution binding with durable/transactional authorization state.
+A distributed deployment still has to reason about external side-effect/accounting atomicity. If the target system supports idempotency keys, transactions, or prepare/commit semantics, adapters should use them.
+
+## Trust boundary
+
+The reference assumes:
+
+1. adapter preparation accurately reports the effective action;
+2. adapter execution obeys the prepared object;
+3. the model cannot invoke the underlying tool/credential through another route;
+4. the broker's decision and durable state remain authoritative;
+5. the capability contract enumerates the security-relevant effect dimensions needed for that adapter.
+
+Production systems SHOULD keep preparation, contract evaluation, authorization, and dispatch inside the same privileged mediation service/capability broker.
 
 ## Residual risks
 
-This mechanism does not solve:
+Execution binding does not solve:
 
-- an unmediated alternate tool or network path;
-- a malicious/compromised trusted adapter;
-- a compromised enforcement host;
-- incorrect effective-target resolution by the adapter;
-- side channels or equivalent effects omitted from the mediation topology;
-- distributed transaction failure where an external side effect and accounting state require atomic coordination.
-
-Those risks remain part of infrastructure hardening and architecture-specific adversarial evaluation.
+- malicious/compromised trusted adapters;
+- incorrect endpoint/effect resolution;
+- unmodeled parameter semantics;
+- alternate unmediated tool/network paths;
+- compromised enforcement host;
+- side channels/equivalent effects outside the topology;
+- distributed transaction failure between broker persistence and a remote effect.
 
 ## Evidence requirement
 
-A strong deployment should be able to demonstrate, for each executed effect:
+A strong deployment should be able to reconstruct:
 
 ```text
 model request
--> prepared effective action
--> action hash
+-> effective PreparedAction
+-> capability contract
+-> exact action hash
 -> authority lease
--> broker decision receipt
+-> chained broker decision containing that hash
 -> durable decision state
 -> adapter dispatch
 -> observed result
 ```
 
-A successful tool call without that chain is not evidence of AAB-mediated execution.
+A successful tool call without this chain is not evidence of AAB-mediated execution.
