@@ -3,29 +3,53 @@
   "$id": "https://example.local/amas/schemas/broker_state.json",
   "title": "AMAS AAB Durable Broker State",
   "type": "object",
-  "required": ["state_version","lease_id","policy_id","generation","last_sequence","usage","seen_nonces","receipts","receipt_chain_tip","state_hash","state_mac"],
+  "required": [
+    "state_version",
+    "lease_id",
+    "policy_id",
+    "generation",
+    "previous_state_hash",
+    "ancestor_state_hashes",
+    "last_sequence",
+    "usage",
+    "seen_nonces",
+    "receipts",
+    "receipt_chain_tip",
+    "state_hash",
+    "state_mac"
+  ],
   "properties": {
-    "state_version": {"const": 1},
+    "state_version": {"const": 2},
     "lease_id": {"type": "string", "minLength": 1},
-    "policy_id": {"type": ["string","null"]},
+    "policy_id": {"type": ["string", "null"]},
     "generation": {"type": "integer", "minimum": 1},
+    "previous_state_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "ancestor_state_hashes": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+      "uniqueItems": true
+    },
     "last_sequence": {"type": "integer", "minimum": 0},
     "usage": {
       "type": "object",
-      "required": ["actions","network_calls","egress_bytes","wall_clock_seconds"],
+      "required": ["actions", "network_calls", "egress_bytes", "wall_clock_seconds"],
       "properties": {
-        "actions": {"type":"integer","minimum":0},
-        "network_calls": {"type":"integer","minimum":0},
-        "egress_bytes": {"type":"integer","minimum":0},
-        "wall_clock_seconds": {"type":"integer","minimum":0}
+        "actions": {"type": "integer", "minimum": 0},
+        "network_calls": {"type": "integer", "minimum": 0},
+        "egress_bytes": {"type": "integer", "minimum": 0},
+        "wall_clock_seconds": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
     },
-    "seen_nonces": {"type":"array","items":{"type":"string","minLength":1},"uniqueItems":true},
-    "receipts": {"type":"array","items":{"type":"object"}},
-    "receipt_chain_tip": {"type":"string","pattern":"^[0-9a-f]{64}$"},
-    "state_hash": {"type":"string","pattern":"^[0-9a-f]{64}$"},
-    "state_mac": {"type":"string","pattern":"^[0-9a-f]{64}$"}
+    "seen_nonces": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 16},
+      "uniqueItems": true
+    },
+    "receipts": {"type": "array", "items": {"type": "object"}},
+    "receipt_chain_tip": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "state_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "state_mac": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "additionalProperties": false
 }

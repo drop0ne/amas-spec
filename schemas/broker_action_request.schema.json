@@ -26,6 +26,7 @@
     "target": {"type": "string", "minLength": 1},
     "destination": {"type": ["string", "null"]},
     "credential_ref": {"type": ["string", "null"]},
+    "capability_contract_id": {"type": ["string", "null"], "minLength": 1},
     "side_effect": {"enum": ["observe", "simulate", "reversible_write", "persistent_write", "privileged_change"]},
     "delegation_depth": {"type": "integer", "minimum": 0, "default": 0},
     "timestamp": {"type": "string", "format": "date-time"}

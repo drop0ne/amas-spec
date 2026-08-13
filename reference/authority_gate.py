@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AMAS AAB reference authorization gate.
 
-Evaluates structured action requests against an explicit authority lease.
+Evaluates structured action requests against an explicit authority policy.
 This module never executes the requested action.
 """
 from __future__ import annotations
@@ -60,6 +60,13 @@ def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | No
 
         credential = request.get("credential_ref")
         checks.append(("credential_scope", credential is None or credential in policy.get("credentials", []), True))
+
+        allowed_contracts = policy.get("capability_contracts", [])
+        contract_id = request.get("capability_contract_id")
+        if allowed_contracts:
+            checks.append(("capability_contract_scope", contract_id in allowed_contracts, True))
+        else:
+            checks.append(("capability_contract_scope", contract_id is None, True))
 
         req_effect = SIDE_EFFECT[request["side_effect"]]
         max_effect = SIDE_EFFECT[policy["max_side_effect"]]

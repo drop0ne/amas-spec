@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""AAB reference mediated execution binding.
+"""AAB mediated authorization-to-execution binding.
 
-A trusted adapter resolves the *effective* action and broker cost before
-authorization. The AAB broker evaluates that prepared action. Only an ALLOW
-decision permits the same immutable PreparedAction to reach adapter execution.
-
-The acting model never supplies authoritative cost or effective adapter fields.
-A production deployment must additionally ensure there is no second path to the
-underlying tool, credential, network interface, subprocess, or equivalent effect.
+A trusted adapter resolves the effective action, capability contract, security-
+relevant effects, and broker cost before authorization. The exact immutable
+PreparedAction hash is passed into the broker and is covered by the broker's
+tamper-evident receipt chain. Only a receipt carrying the same binding hash may
+release the prepared action to execution.
 """
 from __future__ import annotations
 
@@ -17,6 +15,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
 
+from capability_contract import CapabilityContractError, validate_prepared_action
 from enforcement_broker import USAGE_KEYS
 
 
@@ -33,7 +32,6 @@ def canonical_action_hash(obj: Any) -> str:
 
 
 def _json_clone(value: Any) -> Any:
-    """Return a detached JSON value and reject non-JSON object types."""
     try:
         return json.loads(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
     except (TypeError, ValueError) as exc:
@@ -54,13 +52,27 @@ def _validate_cost(cost: Mapping[str, Any]) -> dict[str, int]:
     return normalized
 
 
-class PreparedAction:
-    """Deeply immutable canonical adapter-resolved action.
+def _empty_security_effects() -> dict[str, list[str]]:
+    return {
+        "redirect_chain": [],
+        "filesystem_paths": [],
+        "subprocesses": [],
+        "secondary_destinations": [],
+    }
 
-    Nested dictionaries/lists are serialized at construction. Every property
-    returns a fresh detached value, so neither caller nor adapter can mutate the
-    descriptor that was hashed and authorized.
-    """
+
+def _validate_security_effects(value: Mapping[str, Any] | None) -> dict[str, list[str]]:
+    effects = _empty_security_effects() if value is None else _json_clone(dict(value))
+    if set(effects) != set(_empty_security_effects()):
+        raise ExecutionBindingError("security_effects must contain exactly the required effect classes")
+    for key, items in effects.items():
+        if not isinstance(items, list) or any(not isinstance(item, str) or not item for item in items):
+            raise ExecutionBindingError(f"invalid security_effects:{key}")
+    return effects
+
+
+class PreparedAction:
+    """Deeply immutable canonical adapter-resolved action."""
 
     __slots__ = ("_adapter_id", "_payload_json", "_action_hash", "_sealed")
 
@@ -71,6 +83,7 @@ class PreparedAction:
         broker_request: Mapping[str, Any],
         parameters: Any,
         cost: Mapping[str, int],
+        security_effects: Mapping[str, Any] | None = None,
     ):
         if not isinstance(adapter_id, str) or not adapter_id:
             raise ExecutionBindingError("adapter_id must be a non-empty string")
@@ -79,6 +92,7 @@ class PreparedAction:
             "broker_request": _json_clone(dict(broker_request)),
             "parameters": _json_clone(parameters),
             "cost": _validate_cost(cost),
+            "security_effects": _validate_security_effects(security_effects),
         }
         payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         object.__setattr__(self, "_adapter_id", adapter_id)
@@ -110,6 +124,10 @@ class PreparedAction:
     def cost(self) -> dict[str, int]:
         return self._payload()["cost"]
 
+    @property
+    def security_effects(self) -> dict[str, list[str]]:
+        return self._payload()["security_effects"]
+
     def canonical_payload(self) -> dict[str, Any]:
         return self._payload()
 
@@ -119,20 +137,24 @@ class PreparedAction:
 
 
 class TrustedAdapter(Protocol):
-    """Adapter contract for a broker-mediated side-effect path."""
-
     adapter_id: str
 
     def prepare(self, request: Mapping[str, Any]) -> PreparedAction:
-        """Resolve the effective target/destination/credential/effect and cost."""
+        """Resolve the effective action, effects, and cost."""
 
     def execute(self, action: PreparedAction) -> Any:
         """Perform exactly the already-authorized prepared action."""
 
 
 class AuthorizationBroker(Protocol):
-    def authorize(self, request: dict[str, Any], *, cost: dict[str, int], now: datetime | None = None) -> dict[str, Any]:
-        ...
+    def authorize(
+        self,
+        request: dict[str, Any],
+        *,
+        cost: dict[str, int],
+        now: datetime | None = None,
+        execution_binding_hash: str | None = None,
+    ) -> dict[str, Any]: ...
 
 
 _REQUIRED_BROKER_FIELDS = {
@@ -148,8 +170,6 @@ _REQUIRED_BROKER_FIELDS = {
     "timestamp",
 }
 
-# A trusted adapter may resolve effective operation/target/destination/credential
-# and side-effect class. It must not silently change authority/replay identity.
 _BOUND_ENVELOPE_FIELDS = (
     "request_id",
     "lease_id",
@@ -162,9 +182,14 @@ _BOUND_ENVELOPE_FIELDS = (
 
 
 class MediatedExecutor:
-    """Prepare, authorize, and conditionally execute one trusted-adapter action."""
+    """Prepare, contract-check, authorize, and execute one mediated action."""
 
-    def __init__(self, broker: AuthorizationBroker, adapters: Mapping[str, TrustedAdapter]):
+    def __init__(
+        self,
+        broker: AuthorizationBroker,
+        adapters: Mapping[str, TrustedAdapter],
+        capability_contracts: Mapping[str, Mapping[str, Any]] | None = None,
+    ):
         if not adapters:
             raise ValueError("at least one trusted adapter is required")
         self.broker = broker
@@ -175,14 +200,13 @@ class MediatedExecutor:
             if adapter.adapter_id != name:
                 raise ValueError("adapter registry key/id mismatch")
             self._adapters[name] = adapter
+        self._contracts = {str(key): _json_clone(dict(value)) for key, value in (capability_contracts or {}).items()}
 
     def _prepare(self, request: Mapping[str, Any]) -> PreparedAction:
         adapter_id = request.get("adapter_id")
         if not isinstance(adapter_id, str) or adapter_id not in self._adapters:
             raise ExecutionBindingError("unknown adapter")
 
-        # Detach model-supplied data before trusted preparation. Later caller
-        # mutation therefore cannot change the request being resolved.
         model_request = _json_clone(dict(request))
         model_request.pop("adapter_id", None)
         adapter = self._adapters[adapter_id]
@@ -201,17 +225,32 @@ class MediatedExecutor:
             if broker_request.get(field) != model_request.get(field):
                 raise ExecutionBindingError(f"prepared envelope mismatch:{field}")
 
-        # Reconstruct once so adapter-provided PreparedAction cannot carry an
-        # implementation-specific subclass or mutable wrapper into dispatch.
-        return PreparedAction(
+        # Reconstruct into the exact trusted base class, detaching any adapter
+        # subclass/wrapper before policy evaluation and dispatch.
+        action = PreparedAction(
             adapter_id=adapter_id,
             broker_request=broker_request,
             parameters=prepared.parameters,
             cost=prepared.cost,
+            security_effects=prepared.security_effects,
         )
 
+        contract_id = action.broker_request.get("capability_contract_id")
+        if contract_id is not None:
+            if not isinstance(contract_id, str) or contract_id not in self._contracts:
+                raise ExecutionBindingError("unknown capability contract")
+            try:
+                validate_prepared_action(self._contracts[contract_id], action)
+            except CapabilityContractError as exc:
+                raise ExecutionBindingError(f"capability contract denied:{exc}") from exc
+        elif self._contracts:
+            # A configured mediated executor does not silently drop from
+            # parameter/effect enforcement to coarse authorization.
+            raise ExecutionBindingError("capability contract missing")
+
+        return action
+
     def execute(self, request: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
-        """Prepare, authorize, bind, and conditionally execute one action."""
         now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
             prepared = self._prepare(request)
@@ -226,16 +265,28 @@ class MediatedExecutor:
             }
 
         action_hash = prepared.action_hash
-        receipt = self.broker.authorize(prepared.broker_request, cost=prepared.cost, now=now)
+        receipt = self.broker.authorize(
+            prepared.broker_request,
+            cost=prepared.cost,
+            now=now,
+            execution_binding_hash=action_hash,
+        )
         if not isinstance(receipt, dict):
             raise ExecutionBindingError("authorization broker returned invalid receipt")
 
-        # Underlying AAB receipt stays independently hash-chained by the broker.
-        # This detached field binds caller-visible authorization evidence to the
-        # exact immutable descriptor that will be dispatched.
-        authorization = copy.deepcopy(receipt)
-        authorization["execution_binding_hash"] = action_hash
+        # The binding must be inside the broker-signed/chained receipt, not
+        # appended by caller code afterward.
+        if receipt.get("execution_binding_hash") != action_hash:
+            return {
+                "decision": "DENY",
+                "reason": "authorization_binding_mismatch",
+                "executed": False,
+                "action_hash": action_hash,
+                "authorization_receipt": copy.deepcopy(receipt),
+                "result": None,
+            }
 
+        authorization = copy.deepcopy(receipt)
         if receipt.get("decision") != "ALLOW":
             return {
                 "decision": receipt.get("decision", "DENY"),

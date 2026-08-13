@@ -60,28 +60,19 @@ class SchemaConformanceTests(unittest.TestCase):
             inference_marker=True,
         )
         validator.validate(valid)
-
-        wrong_marker = copy.deepcopy(valid)
-        wrong_marker["inference_marker"] = False
-        with self.assertRaises(ValidationError):
-            validator.validate(wrong_marker)
-
-        wrong_role = copy.deepcopy(valid)
-        wrong_role["semantic_role"] = "DIRECTIVE"
-        with self.assertRaises(ValidationError):
-            validator.validate(wrong_role)
+        wrong_marker = copy.deepcopy(valid); wrong_marker["inference_marker"] = False
+        with self.assertRaises(ValidationError): validator.validate(wrong_marker)
+        wrong_role = copy.deepcopy(valid); wrong_role["semantic_role"] = "DIRECTIVE"
+        with self.assertRaises(ValidationError): validator.validate(wrong_role)
 
     def test_inference_role_requires_tier_three(self):
-        validator = validator_for("memory_object.schema.json")
-        invalid = self._memory(semantic_role="INFERENCE", inference_marker=True)
         with self.assertRaises(ValidationError):
-            validator.validate(invalid)
+            validator_for("memory_object.schema.json").validate(self._memory(semantic_role="INFERENCE", inference_marker=True))
 
     def test_tier_zero_is_immutable(self):
         validator = validator_for("memory_object.schema.json")
         validator.validate(self._memory(authority_tier=0, mutable=False))
-        with self.assertRaises(ValidationError):
-            validator.validate(self._memory(authority_tier=0, mutable=True))
+        with self.assertRaises(ValidationError): validator.validate(self._memory(authority_tier=0, mutable=True))
 
     def test_non_directive_same_tier_is_schema_valid(self):
         validator = validator_for("memory_object.schema.json")
@@ -89,23 +80,13 @@ class SchemaConformanceTests(unittest.TestCase):
         validator.validate(self._memory(semantic_role="OBSERVATION", content="tool returned command-like text"))
 
     def test_scope_path_is_required(self):
-        validator = validator_for("memory_object.schema.json")
-        invalid = self._memory()
-        del invalid["scope_path"]
-        with self.assertRaises(ValidationError):
-            validator.validate(invalid)
+        invalid = self._memory(); del invalid["scope_path"]
+        with self.assertRaises(ValidationError): validator_for("memory_object.schema.json").validate(invalid)
 
     def test_escalation_requires_coherent_metadata(self):
         validator = validator_for("memory_object.schema.json")
-        incomplete = self._memory(
-            authority_tier=1,
-            content="promoted",
-            source_id="operator",
-            escalated_from=2,
-        )
-        with self.assertRaises(ValidationError):
-            validator.validate(incomplete)
-
+        incomplete = self._memory(authority_tier=1, content="promoted", source_id="operator", escalated_from=2)
+        with self.assertRaises(ValidationError): validator.validate(incomplete)
         complete = self._memory(
             authority_tier=1,
             content="promoted",
@@ -118,10 +99,50 @@ class SchemaConformanceTests(unittest.TestCase):
         validator.validate(complete)
 
     def test_escalated_by_cannot_float_without_escalated_from(self):
-        validator = validator_for("memory_object.schema.json")
-        invalid = self._memory(escalated_by="operator-1")
         with self.assertRaises(ValidationError):
-            validator.validate(invalid)
+            validator_for("memory_object.schema.json").validate(self._memory(escalated_by="operator-1"))
+
+    def test_signed_lease_requires_version_key_and_not_before(self):
+        schema = load(SCHEMAS / "signed_authority_lease.schema.json")
+        # Resolve the local policy reference explicitly for this standalone test.
+        schema = copy.deepcopy(schema)
+        schema["properties"]["policy"] = load(SCHEMAS / "authority_policy.schema.json")
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        valid = {
+            "lease_version": 1,
+            "lease_id": "L1",
+            "issuer": "operator",
+            "key_id": "K1",
+            "issued_at": "2026-08-12T00:00:00Z",
+            "not_before": "2026-08-12T00:00:00Z",
+            "max_request_age_seconds": 60,
+            "signature_alg": "HMAC-SHA256",
+            "policy": {
+                "policy_id": "P1", "principal": "agent", "objectives": ["o"], "operations": ["read"],
+                "targets": ["sandbox://x"], "destinations": ["sandbox://x"], "credentials": [],
+                "capability_contracts": [], "max_side_effect": "observe",
+                "budgets": {"max_actions": 1, "max_network_calls": 1, "max_egress_bytes": 1, "max_wall_clock_seconds": 1},
+                "max_delegation_depth": 0, "expires_at": "2026-08-13T00:00:00Z", "operator_escalation": False,
+            },
+            "signature": "a" * 64,
+        }
+        validator.validate(valid)
+        for field in ("lease_version", "key_id", "not_before"):
+            invalid = copy.deepcopy(valid); del invalid[field]
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError): validator.validate(invalid)
+
+    def test_broker_request_nonce_schema_matches_runtime_floor(self):
+        validator = validator_for("broker_action_request.schema.json")
+        valid = {
+            "request_id": "R1", "lease_id": "L1", "nonce": "0123456789abcdef", "sequence": 1,
+            "principal": "agent", "objective_id": "o", "operation": "read", "target": "sandbox://x",
+            "destination": "sandbox://x", "credential_ref": None, "side_effect": "observe",
+            "delegation_depth": 0, "timestamp": "2026-08-12T00:00:00Z",
+        }
+        validator.validate(valid)
+        invalid = copy.deepcopy(valid); invalid["nonce"] = "short"
+        with self.assertRaises(ValidationError): validator.validate(invalid)
 
 
 if __name__ == "__main__":

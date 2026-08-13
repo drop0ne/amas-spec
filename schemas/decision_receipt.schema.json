@@ -12,6 +12,8 @@
     "evaluated_at": {"type": "string", "format": "date-time"},
     "policy_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy_request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "execution_binding_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "lease_id": {"type": "string", "minLength": 1},
     "authoritative_usage": {
       "type": "object",
