@@ -47,7 +47,12 @@
       "default": null,
       "properties": {
         "origin": {"type": "string", "minLength": 1, "x-amas-c-type": "amas_utf8"},
-        "chain": {"type": "array", "items": {"type": "string", "minLength": 1, "x-amas-c-type": "amas_utf8"}}
+        "chain": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "x-amas-c-type": "amas_utf8"}
+        }
       },
       "required": ["origin", "chain"],
       "additionalProperties": false
