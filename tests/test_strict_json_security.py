@@ -74,6 +74,24 @@ def broker_request():
     }
 
 
+def contract_body(parameter, values):
+    return {
+        "adapter_id": "mock",
+        "operation": "read",
+        "allowed_parameter_keys": [parameter],
+        "required_parameter_keys": [parameter],
+        "unrestricted_parameter_keys": [],
+        "parameter_allowlists": {parameter: values},
+        "allowed_effective_destinations": ["sandbox://x"],
+        "allowed_credentials": [],
+        "allow_redirects": False,
+        "allowed_filesystem_paths": [],
+        "allow_subprocess": False,
+        "allowed_subprocesses": [],
+        "allowed_secondary_destinations": [],
+    }
+
+
 class StrictJsonSecurityTests(unittest.TestCase):
     def test_authority_gate_rejects_nan(self):
         request = {
@@ -142,21 +160,7 @@ class StrictJsonSecurityTests(unittest.TestCase):
         self.assertTrue(broker.verify_receipts())
 
     def test_capability_allowlist_does_not_conflate_boolean_and_integer(self):
-        contract = {
-            "contract_id": "C1",
-            "adapter_id": "mock",
-            "operation": "read",
-            "allowed_parameter_keys": ["flag"],
-            "required_parameter_keys": ["flag"],
-            "parameter_allowlists": {"flag": [1]},
-            "allowed_effective_destinations": ["sandbox://x"],
-            "allowed_credentials": [],
-            "allow_redirects": False,
-            "allowed_filesystem_paths": [],
-            "allow_subprocess": False,
-            "allowed_subprocesses": [],
-            "allowed_secondary_destinations": [],
-        }
+        contract = capability_contract.bind_contract_id(contract_body("flag", [1]))
         result = capability_contract.validate_contract(
             contract,
             adapter_id="mock",
@@ -168,30 +172,8 @@ class StrictJsonSecurityTests(unittest.TestCase):
         self.assertEqual(result["reason"], "contract_parameter_value:flag")
 
     def test_capability_contract_rejects_nan_allowlist_value(self):
-        contract = {
-            "contract_id": "C1",
-            "adapter_id": "mock",
-            "operation": "read",
-            "allowed_parameter_keys": ["value"],
-            "required_parameter_keys": ["value"],
-            "parameter_allowlists": {"value": [math.nan]},
-            "allowed_effective_destinations": ["sandbox://x"],
-            "allowed_credentials": [],
-            "allow_redirects": False,
-            "allowed_filesystem_paths": [],
-            "allow_subprocess": False,
-            "allowed_subprocesses": [],
-            "allowed_secondary_destinations": [],
-        }
-        result = capability_contract.validate_contract(
-            contract,
-            adapter_id="mock",
-            broker_request={"operation": "read", "destination": "sandbox://x", "credential_ref": None},
-            parameters={"value": 1},
-            security_effects=None,
-        )
-        self.assertFalse(result["valid"])
-        self.assertTrue(result["reason"].startswith("invalid_contract:"))
+        with self.assertRaises(ValueError):
+            capability_contract.bind_contract_id(contract_body("value", [math.nan]))
 
     def test_prepared_action_rejects_nan_parameter(self):
         with self.assertRaises(ExecutionBindingError):
