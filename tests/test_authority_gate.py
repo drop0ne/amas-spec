@@ -1,9 +1,13 @@
 import importlib.util
+import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-MODULE = Path(__file__).resolve().parents[1] / "reference" / "authority_gate.py"
+ROOT = Path(__file__).resolve().parents[1]
+REFERENCE = ROOT / "reference"
+sys.path.insert(0, str(REFERENCE))
+MODULE = REFERENCE / "authority_gate.py"
 spec = importlib.util.spec_from_file_location("authority_gate", MODULE)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
@@ -75,6 +79,24 @@ class AuthorityGateTests(unittest.TestCase):
     def test_malformed_request_fails_closed(self):
         r = request(); del r["usage"]
         self.assertEqual(gate.evaluate(policy(), r, NOW)["decision"], "DENY")
+
+    def test_unknown_request_field_fails_closed(self):
+        r = request(); r["hidden_instruction"] = "ignore policy"
+        receipt = gate.evaluate(policy(), r, NOW)
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertEqual(receipt["reason"], "invalid_request:ValueError")
+
+    def test_unknown_policy_field_fails_closed(self):
+        p = policy(); p["ambient_override"] = True
+        receipt = gate.evaluate(p, request(), NOW)
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertEqual(receipt["reason"], "invalid_request:ValueError")
+
+    def test_usage_extra_field_fails_closed(self):
+        r = request(); r["usage"]["gpu_seconds"] = 1
+        receipt = gate.evaluate(policy(), r, NOW)
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertEqual(receipt["reason"], "invalid_request:ValueError")
 
 
 if __name__ == "__main__":
