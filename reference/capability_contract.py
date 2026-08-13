@@ -14,7 +14,7 @@ from typing import Any, Mapping, Protocol
 from canonical_json import CanonicalJSONError, sha256 as canonical_sha256, validate as validate_canonical
 
 
-class CapabilityContractError(RuntimeError):
+class CapabilityContractError(ValueError):
     pass
 
 
@@ -81,10 +81,7 @@ def _normalize_body(body: Mapping[str, Any]) -> dict[str, Any]:
     if extra:
         raise CapabilityContractError(f"contract has unknown fields:{','.join(sorted(extra))}")
 
-    for field in (
-        "adapter_id",
-        "operation",
-    ):
+    for field in ("adapter_id", "operation"):
         if not isinstance(normalized[field], str) or not normalized[field]:
             raise CapabilityContractError(f"invalid {field}")
 
@@ -124,7 +121,6 @@ def _normalize_body(body: Mapping[str, Any]) -> dict[str, Any]:
                 validate_canonical(value)
             except CanonicalJSONError as exc:
                 raise CapabilityContractError("parameter allowlist contains non-canonical value") from exc
-        # Canonical identity rather than Python equality catches True vs 1.
         identities = [canonical_sha256(value) for value in values]
         if len(identities) != len(set(identities)):
             raise CapabilityContractError("parameter allowlist contains duplicate canonical values")
@@ -173,7 +169,6 @@ def verify_contract_identity(contract: Mapping[str, Any]) -> bool:
 
 
 def _scalar_equal(left: Any, right: Any) -> bool:
-    # Python considers True == 1. Authority allowlists must not.
     return type(left) is type(right) and left == right
 
 
@@ -254,7 +249,7 @@ def _validate_effective_action(
             if destination not in body["allowed_secondary_destinations"]:
                 return {"valid": False, "reason": "contract_secondary_destination"}
 
-        return {"valid": True, "reason": "authorized_contract"}
+        return {"valid": True, "reason": "contract_authorized"}
     except (CapabilityContractError, CanonicalJSONError, TypeError, ValueError, RecursionError) as exc:
         return {"valid": False, "reason": f"invalid_contract:{type(exc).__name__}"}
 
