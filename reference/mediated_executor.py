@@ -10,12 +10,12 @@ release the prepared action to execution.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
 
-from capability_contract import CapabilityContractError, validate_prepared_action
+from canonical_json import CanonicalJSONError, MAX_SAFE_INTEGER, dumps as canonical_dumps, sha256 as canonical_sha256, validate as validate_canonical
+from capability_contract import CapabilityContractError, validate_prepared_action, verify_contract_identity
 from enforcement_broker import USAGE_KEYS
 
 
@@ -23,19 +23,26 @@ class ExecutionBindingError(RuntimeError):
     """Fail-closed mediated-execution error."""
 
 
-def _canonical_bytes(obj: Any) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
 def canonical_action_hash(obj: Any) -> str:
-    return hashlib.sha256(_canonical_bytes(obj)).hexdigest()
-
-
-def _json_clone(value: Any) -> Any:
     try:
-        return json.loads(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-    except (TypeError, ValueError) as exc:
-        raise ExecutionBindingError("prepared action must be JSON-serializable") from exc
+        return canonical_sha256(obj)
+    except CanonicalJSONError as exc:
+        raise ExecutionBindingError("prepared action is not Canonical JSON v1") from exc
+
+
+def _security_clone(value: Any) -> Any:
+    try:
+        # Canonical serialization is both validation and a deep-copy boundary.
+        return json.loads(canonical_dumps(value))
+    except (CanonicalJSONError, json.JSONDecodeError, RecursionError) as exc:
+        raise ExecutionBindingError("prepared security object must satisfy Canonical JSON v1") from exc
+
+
+def _result_clone(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
+        raise ExecutionBindingError("adapter result must be finite JSON") from exc
 
 
 def _validate_cost(cost: Mapping[str, Any]) -> dict[str, int]:
@@ -44,7 +51,7 @@ def _validate_cost(cost: Mapping[str, Any]) -> dict[str, int]:
     normalized: dict[str, int] = {}
     for name in USAGE_KEYS:
         value = cost[name]
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > MAX_SAFE_INTEGER:
             raise ExecutionBindingError(f"invalid adapter cost:{name}")
         normalized[name] = value
     if normalized["actions"] < 1:
@@ -62,12 +69,14 @@ def _empty_security_effects() -> dict[str, list[str]]:
 
 
 def _validate_security_effects(value: Mapping[str, Any] | None) -> dict[str, list[str]]:
-    effects = _empty_security_effects() if value is None else _json_clone(dict(value))
+    effects = _empty_security_effects() if value is None else _security_clone(dict(value))
     if set(effects) != set(_empty_security_effects()):
         raise ExecutionBindingError("security_effects must contain exactly the required effect classes")
     for key, items in effects.items():
         if not isinstance(items, list) or any(not isinstance(item, str) or not item for item in items):
             raise ExecutionBindingError(f"invalid security_effects:{key}")
+        if len(items) != len(set(items)):
+            raise ExecutionBindingError(f"duplicate security_effects:{key}")
     return effects
 
 
@@ -89,15 +98,20 @@ class PreparedAction:
             raise ExecutionBindingError("adapter_id must be a non-empty string")
         payload = {
             "adapter_id": adapter_id,
-            "broker_request": _json_clone(dict(broker_request)),
-            "parameters": _json_clone(parameters),
+            "broker_request": _security_clone(dict(broker_request)),
+            "parameters": _security_clone(parameters),
             "cost": _validate_cost(cost),
             "security_effects": _validate_security_effects(security_effects),
         }
-        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        try:
+            validate_canonical(payload)
+            payload_json = canonical_dumps(payload)
+            action_hash = canonical_sha256(payload)
+        except CanonicalJSONError as exc:
+            raise ExecutionBindingError("prepared action is not Canonical JSON v1") from exc
         object.__setattr__(self, "_adapter_id", adapter_id)
         object.__setattr__(self, "_payload_json", payload_json)
-        object.__setattr__(self, "_action_hash", hashlib.sha256(payload_json.encode("utf-8")).hexdigest())
+        object.__setattr__(self, "_action_hash", action_hash)
         object.__setattr__(self, "_sealed", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -200,14 +214,24 @@ class MediatedExecutor:
             if adapter.adapter_id != name:
                 raise ValueError("adapter registry key/id mismatch")
             self._adapters[name] = adapter
-        self._contracts = {str(key): _json_clone(dict(value)) for key, value in (capability_contracts or {}).items()}
+
+        self._contracts: dict[str, dict[str, Any]] = {}
+        for key, value in (capability_contracts or {}).items():
+            if not isinstance(key, str) or not isinstance(value, Mapping):
+                raise ValueError("invalid capability contract registry entry")
+            cloned = _security_clone(dict(value))
+            if cloned.get("contract_id") != key or not verify_contract_identity(cloned):
+                raise ValueError("capability contract registry key/content identity mismatch")
+            self._contracts[key] = cloned
 
     def _prepare(self, request: Mapping[str, Any]) -> PreparedAction:
+        if not isinstance(request, Mapping):
+            raise ExecutionBindingError("request must be an object")
         adapter_id = request.get("adapter_id")
         if not isinstance(adapter_id, str) or adapter_id not in self._adapters:
             raise ExecutionBindingError("unknown adapter")
 
-        model_request = _json_clone(dict(request))
+        model_request = _security_clone(dict(request))
         model_request.pop("adapter_id", None)
         adapter = self._adapters[adapter_id]
         prepared = adapter.prepare(model_request)
@@ -225,8 +249,6 @@ class MediatedExecutor:
             if broker_request.get(field) != model_request.get(field):
                 raise ExecutionBindingError(f"prepared envelope mismatch:{field}")
 
-        # Reconstruct into the exact trusted base class, detaching any adapter
-        # subclass/wrapper before policy evaluation and dispatch.
         action = PreparedAction(
             adapter_id=adapter_id,
             broker_request=broker_request,
@@ -244,17 +266,19 @@ class MediatedExecutor:
             except CapabilityContractError as exc:
                 raise ExecutionBindingError(f"capability contract denied:{exc}") from exc
         elif self._contracts:
-            # A configured mediated executor does not silently drop from
-            # parameter/effect enforcement to coarse authorization.
             raise ExecutionBindingError("capability contract missing")
 
         return action
 
     def execute(self, request: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
-        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        else:
+            now = now.astimezone(timezone.utc)
         try:
             prepared = self._prepare(request)
-        except (ExecutionBindingError, TypeError, ValueError) as exc:
+        except (ExecutionBindingError, CanonicalJSONError, TypeError, ValueError, RecursionError) as exc:
             return {
                 "decision": "DENY",
                 "reason": f"preparation_failed:{type(exc).__name__}",
@@ -274,8 +298,6 @@ class MediatedExecutor:
         if not isinstance(receipt, dict):
             raise ExecutionBindingError("authorization broker returned invalid receipt")
 
-        # The binding must be inside the broker-signed/chained receipt, not
-        # appended by caller code afterward.
         if receipt.get("execution_binding_hash") != action_hash:
             return {
                 "decision": "DENY",
@@ -305,5 +327,5 @@ class MediatedExecutor:
             "executed": True,
             "action_hash": action_hash,
             "authorization_receipt": authorization,
-            "result": _json_clone(result),
+            "result": _result_clone(result),
         }
