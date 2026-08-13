@@ -104,6 +104,16 @@
         "required": ["escalated_from", "escalated_by", "provenance"],
         "properties": {"escalated_from": {"type": "integer"}}
       }
+    },
+    {
+      "if": {"properties": {"supersedes": {"type": "string"}}, "required": ["supersedes"]},
+      "then": {
+        "required": ["authn_context", "provenance"],
+        "properties": {
+          "authn_context": {"type": "string", "minLength": 1},
+          "provenance": {"type": "object"}
+        }
+      }
     }
   ],
   "additionalProperties": false
