@@ -1,300 +1,264 @@
 # AMAS Agent Authority Boundary (AAB)
 
-**Version:** 0.4-draft  
-**Status:** Experimental normative extension with executable enforcement-path controls  
+**Version:** 0.4.1-draft  
+**Status:** Experimental normative extension with executable enforcement-path hardening  
 **Date:** 2026-08-12
 
 ## Purpose
 
-AAB extends AMAS from contextual/memory authority to **action authority** for tool-using and autonomous agents.
+AAB extends AMAS from contextual/memory authority to external action authority for tool-using and autonomous agents.
 
-AMAS Core answers: **which source is authoritative?**  
-AAB answers: **is this proposed side effect authorized, and can the enforcement boundary prove that its own security state has not been reset or bypassed?**
+AMAS Core asks **which contextual object has authority?** AAB asks **does this principal possess authority for this exact effective side effect, and can the enforcement path preserve evidence that authorization state was neither widened, replayed, reset, forked, nor bypassed?**
 
-AAB is designed on the assumption that capable agents can make mistakes, optimize around evaluators, discover unexpected capabilities, follow malicious retrieved instructions, or attempt to use reachable resources that were never authorized.
+AAB assumes capable agents can misunderstand instructions, follow hostile retrieved data, optimize around an evaluator, discover unintended capabilities, or attempt to use reachable resources that were never delegated.
 
 ## Core invariants
 
-1. **Capability is not authority.**
-2. **Reachability is not authorization.**
-3. **Data is not instruction.**
-4. **Inference is not delegation.**
-5. **Success does not widen scope.**
-6. **No ambient authority.** Credentials, paths, tools, and privileges require explicit grants.
-7. **Monotonic delegation.** Child authority may narrow but never silently widen parent authority.
-8. **Fail closed.** Missing, ambiguous, expired, replayed, stale, unverifiable, or non-durable enforcement state is not authority.
-9. **External enforcement.** The acting model is not the sole judge of its own authorization.
-10. **Broker-owned security state.** Enforcement counters and replay state do not depend on agent assertions.
-11. **Durable replay state.** Restarting the broker must not reset consumed nonces, request sequence, budgets, or receipt history.
-12. **Rollback evidence.** Integrity-protected local state alone is insufficient; higher assurance requires an independently retained checkpoint capable of detecting restoration of an older valid state.
-13. **Mediation completeness.** Every modeled path from an acting agent to a controlled side-effect sink must cross an enforcement broker.
-14. **Decision receipts.** Authorization decisions must be auditable and tamper-evident.
-15. **Evidence over assertion.** Higher containment claims require reproducible tests.
+1. Capability is not authority.
+2. Reachability is not authorization.
+3. Data is not instruction.
+4. Inference is not delegation.
+5. Success does not widen scope.
+6. No ambient authority: credentials, destinations, tools, parameter classes, and privileges require explicit grants.
+7. Delegation is monotonic: a child may narrow but never silently widen parent authority.
+8. Missing, malformed, expired, not-yet-valid, replayed, revoked, stale, or unverifiable authority fails closed.
+9. The acting model is not the sole judge of its own authorization.
+10. Enforcement counters, replay state, and durable security state are broker-owned.
+11. Restart does not restore spent authority.
+12. Higher-assurance rollback evidence must be anchored outside the state being protected.
+13. Newer durable state must descend from the checkpointed lineage, not merely carry a larger counter.
+14. Authorization binds the exact effective prepared action, not merely the model's claimed intent.
+15. Security-relevant adapter parameters and secondary effects are part of authority.
+16. Every modeled path from an acting agent to a controlled side-effect sink must cross the enforcement boundary.
+17. Decisions are auditable and tamper-evident.
+18. Higher containment claims require reproducible architecture-specific evidence.
 
 ## 1. Authority leases
 
-An action-capable runtime binds an agent to a time-bounded authority lease containing, at minimum:
+An action-capable runtime binds a principal to an authenticated lease. The reference lease carries:
 
-- lease/policy identifiers
-- issuer and principal identity
-- objective identifiers
-- operations, targets, and destinations
-- credential references
-- maximum side-effect class
-- action/network/egress/time budgets
-- delegation depth
-- issuance and expiration times
-- request freshness limits
-- integrity/authentication metadata
+- `lease_version`;
+- lease/policy identifiers;
+- issuer and `key_id`;
+- principal identity;
+- issue time and `not_before`;
+- policy expiry;
+- maximum request age;
+- objectives, operations, targets, destinations, credentials;
+- allowed capability-contract identifiers;
+- side-effect ceiling;
+- action/network/egress/time budgets;
+- delegation depth;
+- integrity/authentication metadata.
 
 Absence from an allowlist means denial.
 
-AAB 0.3 introduced the signed reference lease in `schemas/signed_authority_lease.schema.json` and `reference/enforcement_broker.py`. The reference uses HMAC-SHA256 for standard-library portability; production signing authority should normally live outside the model execution environment and use deployment-appropriate key management.
+The reference uses HMAC-SHA256 for compact standard-library examples. Production signing keys should be isolated from the acting model and selected for the deployment trust architecture.
 
-## 2. Broker action requests
+### Revocation
 
-Before an external side effect, the broker receives a structured request containing:
+Expiry is not sufficient for emergency containment. The reference broker accepts an external `revocation_checker(lease_id)` and fails closed when a lease is revoked. The simple in-memory `RevocationRegistry` exists for tests only; production revocation state must be authenticated, durable, and outside the model's control.
 
-- request identifier
-- lease identifier
-- unique nonce
-- monotonic sequence number
-- principal and objective
-- operation, target, destination
-- credential reference if any
-- side-effect class
-- delegation depth
-- timestamp
+## 2. Effective action and capability contracts
 
-The acting agent does not supply the authoritative cumulative counters used for its own authorization. The broker combines its persisted counters with trusted tool-adapter cost metadata before policy evaluation.
+The model's request is not treated as an authoritative description of the effect.
 
-## 3. Enforcement order
+A trusted adapter prepares an immutable effective action containing:
 
-### Envelope/state checks
+- operation;
+- target;
+- effective destination;
+- credential reference;
+- side-effect class;
+- adapter parameters;
+- trusted cost;
+- security-relevant secondary effects.
+
+`reference/capability_contract.py` adds adapter-specific constraints for:
+
+- allowed/required parameter keys;
+- parameter value allowlists;
+- effective destinations;
+- credentials;
+- redirect chains;
+- filesystem paths;
+- subprocess effects;
+- secondary network destinations.
+
+An allowed endpoint or operation does not imply that every parameterization of it is authorized.
+
+The trusted adapter is part of the enforcement plane. AAB cannot protect against an adapter that lies about the effect it will execute.
+
+## 3. Authorization-to-execution binding
+
+`reference/mediated_executor.py` computes a SHA-256 hash over the canonical immutable prepared action, including security effects and trusted cost.
+
+That `execution_binding_hash` is passed into the broker **before** the broker creates its decision receipt. The broker's receipt chain therefore covers the exact prepared-action hash.
+
+Execution is released only when:
+
+1. preparation succeeds;
+2. any configured capability contract succeeds;
+3. AAB policy evaluation returns `ALLOW`;
+4. the chained broker receipt contains the same `execution_binding_hash`; and
+5. the same immutable `PreparedAction` is passed to the registered trusted adapter.
+
+A general-purpose `ALLOW` result returned to untrusted application code is weaker than this design.
+
+## 4. Replay and cumulative budgets
 
 The broker verifies:
 
-1. lease authenticity
-2. lease identifier binding
-3. nonce uniqueness
-4. monotonic sequence
-5. request timestamp/freshness
-6. broker-bound action cost
-7. durable enforcement state validity
-8. receipt-chain validity
-9. optional external checkpoint consistency
+1. lease authenticity and validity window;
+2. revocation state;
+3. lease identifier binding;
+4. nonce format and uniqueness;
+5. exact monotonic request sequence;
+6. request freshness/future skew;
+7. capability-contract scope;
+8. trusted adapter cost;
+9. policy scope and side-effect ceiling;
+10. cumulative broker-owned budgets.
 
-### Policy checks
+The acting agent does not supply the authoritative cumulative counters used for its own authorization.
 
-The policy gate then enforces:
+Structurally valid requests consume replay identity even when policy denies them, preventing a denied envelope from later being replayed as new.
 
-1. policy freshness
-2. principal binding
-3. objective binding
-4. operation scope
-5. target scope
-6. destination/network scope
-7. credential scope
-8. side-effect ceiling
-9. action budget
-10. network-call budget
-11. egress-byte budget
-12. wall-clock budget
-13. delegation depth
+## 5. Durable enforcement state
 
-## 4. Durable enforcement state — AAB 0.4
+AAB 0.4.1 uses durable-state format version 2 in `reference/durable_broker.py`.
 
-AAB 0.4 adds `reference/durable_broker.py`.
+Persisted state includes:
 
-The durable state envelope persists:
+- lease/policy identity;
+- generation;
+- `previous_state_hash`;
+- explicit ancestor-state hashes;
+- last accepted structural request sequence;
+- cumulative usage;
+- consumed nonces;
+- complete decision-receipt chain;
+- receipt-chain tip;
+- state hash and integrity MAC.
 
-- lease/policy identity
-- state generation
-- last accepted structural request sequence
-- broker-owned cumulative usage
-- consumed nonces
-- complete decision-receipt chain
-- receipt-chain tip
-- state hash
-- state integrity MAC
+### Transaction serialization
 
-The reference persistence path uses write + file `fsync` + atomic replace and attempts directory `fsync` where supported.
+A local SQLite sidecar is used only as a compact reference transaction lock. Every authorization performs `BEGIN IMMEDIATE`, reloads the newest authenticated JSON state while holding the lock, evaluates against that state, persists the next state, and only then releases the transaction.
 
-**Critical execution rule:** a tool adapter must not interpret an authorization as executable until durable persistence succeeds. Persistence failure is therefore a fail-closed condition.
+This removes the earlier stale-process double-spend condition in which two broker instances could both authorize against the same counters/sequence snapshot.
 
-### Restart behavior
+A production system may instead use a transactional database, single-writer service, consensus-backed store, or other mechanism appropriate to its threat model.
 
-After restart, the broker restores replay state, cumulative budgets, sequence state, and receipt history. Restarting the process must not create fresh authority.
+### Persistence-before-effect
 
-### Local integrity is not rollback protection
+A real side effect MUST NOT be interpreted as executable until the durable authorization transition succeeds. Persistence failure is fail-closed. The reference broker poisons an instance after a persistence failure so callers cannot continue using uncertain in-memory state.
 
-A valid MAC proves that a state object was produced by a holder of the integrity key. It does **not** prove that the object is the newest valid state. An attacker could restore an older, still-valid state file and thereby attempt to recover spent budget or previously consumed nonces.
+## 6. Rollback and state ancestry
 
-AAB 0.4 therefore defines an independently signable checkpoint containing:
+A valid MAC proves integrity/authorship under a key; it does not prove freshness.
 
-- lease/policy identity
-- state generation
-- state hash
-- receipt count
-- receipt-chain tip
-- checkpoint timestamp
+AAB therefore supports independently retained checkpoints containing the state generation, state hash, receipt count, and receipt-chain tip.
 
-If restored broker state is older than the independently retained checkpoint, restoration fails closed with rollback evidence. If generation matches but state hash or receipt tip differs, restoration also fails closed.
+AAB 0.4.1 strengthens this from generation-only comparison to explicit ancestry:
 
-The reference checkpoint is still HMAC-based and file-serializable. Production high-assurance deployments should anchor checkpoints in a different failure domain: remote append-only storage, a transparency service, hardware-backed journal, or equivalent.
+- older state than the checkpoint fails;
+- equal-generation state must exactly match the checkpoint;
+- a higher-generation state is accepted only if the checkpointed state hash appears at the expected ancestry position and the receipt chain extends the checkpoint tip.
 
-See:
+This detects a higher-generation divergent fork under the modeled state format.
 
-- `reference/durable_broker.py`
-- `schemas/broker_state.schema.json`
-- `schemas/broker_checkpoint.schema.json`
-- `tests/test_durable_broker.py`
-
-## 5. Mediation completeness / bypass testing — AAB 0.4
-
-AAB cannot contain an agent if the agent can reach the same side effect through an unmediated route.
-
-AAB 0.4 therefore introduces a structural mediation test. `reference/mediation_graph.py` models nodes such as:
-
-- agents
-- AAB brokers
-- adapters/proxies
-- side-effect sinks
-
-For every modeled path from an `agent` node to a `side_effect` node, at least one `broker` node must occur before the side effect. A path without a broker is explicit bypass evidence.
-
-This is a graph/topology proof over the declared architecture, not proof that the declaration is complete. Production evaluation must also enumerate real capabilities, file descriptors, subprocess paths, network routes, credential channels, RPC endpoints, plugins, and other mechanisms that could produce equivalent effects.
-
-The initial corpus in `adversarial/bypass_topologies.json` covers:
-
-- direct agent→effect bypass
-- alternate adapter bypass
-- indirect proxy bypass
-- multi-agent bypass
-- multiple side-effect sinks
-- broker placement after the side effect
-- mediated cycles
-- unreachable sink configurations that do not constitute functional containment evidence
-
-See `tests/test_mediation_graph.py`.
-
-## 6. Side-effect classes
-
-AAB retains the ordered ceiling:
-
-`observe < simulate < reversible_write < persistent_write < privileged_change`
-
-A request above the lease ceiling is denied.
+The checkpoint must remain in an independent failure domain for meaningful rollback resistance.
 
 ## 7. Monotonic delegation
 
 For parent policy `P` and child policy `C`:
 
-- `C.objectives ⊆ P.objectives`
-- `C.operations ⊆ P.operations`
-- `C.targets ⊆ P.targets`
-- `C.destinations ⊆ P.destinations`
-- `C.credentials ⊆ P.credentials`
-- `C.max_side_effect <= P.max_side_effect`
-- every child budget `<=` the parent budget
-- `C.expires_at <= P.expires_at`
-- delegation depth strictly decreases
-- `C.parent_policy_id == P.policy_id`
+- `C.objectives ⊆ P.objectives`;
+- `C.operations ⊆ P.operations`;
+- `C.targets ⊆ P.targets`;
+- `C.destinations ⊆ P.destinations`;
+- `C.credentials ⊆ P.credentials`;
+- `C.capability_contracts ⊆ P.capability_contracts`;
+- child side-effect ceiling ≤ parent ceiling;
+- every child budget ≤ corresponding parent budget;
+- child expiry ≤ parent expiry;
+- delegation depth strictly decreases;
+- parent lineage is explicit.
 
-Any widening requires a new authority grant; it is not delegation. See `reference/delegation.py`.
+Any widening requires a new authority grant; it is not delegation.
 
-## 8. Decision evidence
+## 8. Mediation completeness
 
-AAB decision receipts form a SHA-256 hash chain with monotonic receipt sequence and previous-receipt hash. The AAB 0.3 broker adds lease identity and authoritative broker usage. AAB 0.4 persists this chain and permits its tip to be externally checkpointed.
+A policy engine cannot contain an agent that can produce the same effect by avoiding the engine.
 
-A hash chain detects mutation/reordering of observed entries but cannot alone prove the log was not truncated. Checkpoint anchoring is the complementary AAB 0.4 mechanism.
+`reference/mediation_graph.py` treats bypass as a reachability property: removing broker nodes must disconnect every modeled agent from every modeled side-effect sink. A shortest bypass witness is returned when this fails.
 
-## 9. Threats constrained
+This is proof only over the declared topology. A real evaluation must enumerate actual:
 
-AAB is designed to constrain or expose:
+- tool adapters;
+- network routes and redirects;
+- credential paths;
+- files/file descriptors;
+- subprocess and plugin mechanisms;
+- RPC/service channels;
+- secondary/equivalent-effect paths;
+- collaborating agents.
 
-- target/objective substitution
-- destination/network expansion
-- ambient credential use
-- privilege/side-effect expansion
-- budget reset or expansion
-- unauthorized delegation
-- action laundering through model rationale
-- success-derived scope expansion
-- stale/replayed requests
-- agent-supplied counter spoofing
-- signed-lease mutation
-- broker restart replay-state loss
-- restoration of older authenticated broker state
-- unmediated side-effect paths represented in the architecture graph
+## 9. Decision evidence
 
-AAB cannot recover containment if the enforcement component, its signing keys, or an unmodeled equivalent side-effect path is compromised.
+Decision receipts are SHA-256 chained with monotonic receipt sequence and previous-receipt hash. Broker receipts can include:
 
-## 10. Reference architecture
+- exact model/broker envelope hash;
+- policy-evaluation request hash;
+- policy hash;
+- lease identity;
+- authoritative usage;
+- exact execution-binding hash.
 
-```text
-model / agent
-     |
-     v
-structured request
-     |
-     v
-+---------------------------+
-| durable AAB broker        |
-| - signed lease            |
-| - replay state            |
-| - broker counters         |
-| - persisted receipts      |
-| - checkpoint comparison   |
-+-------------+-------------+
-              |
-              v
-        policy gate
-              |
-              v
-        tool adapter
-              |
-              v
-       side-effect sink
+Hash chaining detects mutation/reordering of observed records. It does not alone prove that an unanchored chain was not truncated. Durable state and external checkpoints provide complementary evidence.
 
-independent checkpoint anchor <--- state hash / chain tip
-```
+## 10. Threats constrained
 
-The evaluated architecture must also show that there is no second path from the agent to the sink that avoids the broker.
+The reference architecture is designed to constrain or expose:
 
-## 11. Evidence boundary
+- target/objective substitution;
+- destination expansion;
+- ambient credential use;
+- side-effect/privilege expansion;
+- parameter smuggling through an otherwise allowed operation;
+- unapproved redirects, filesystem/subprocess effects, and secondary destinations;
+- budget reset or expansion;
+- unauthorized delegation;
+- action laundering through model rationale;
+- success-derived scope expansion;
+- stale/replayed requests;
+- agent-supplied counter spoofing;
+- lease tampering, premature use, or modeled revocation;
+- broker-restart replay-state loss;
+- stale multi-process authorization state;
+- restoration of older authenticated state;
+- divergent state lineage relative to a checkpoint;
+- mutation of the exact action authorized in the decision receipt;
+- modeled unmediated side-effect paths.
 
-AAB 0.4 materially strengthens the reference architecture but **does not establish A4 frontier-model containment**.
+## 11. Residual trust and failure boundary
 
-The new tests establish narrower propositions:
+AAB does not recover containment if any of the following are compromised or omitted:
 
-- security state survives broker restart
-- replay protections survive broker restart
-- authenticated state mutation is detected
-- an independently retained checkpoint detects rollback to an older still-authenticated state
-- modeled unmediated side-effect paths are detected
+- the enforcement host;
+- signing/revocation/checkpoint keys or services;
+- trusted adapter correctness;
+- operating-system/hypervisor isolation;
+- effective endpoint resolution;
+- an unmodeled equivalent side-effect path;
+- conventional infrastructure vulnerabilities that permit bypass of mediation.
 
-A4 remains an architecture-specific empirical claim requiring evidence that the evaluated model cannot discover or exercise an equivalent unmediated path in the real deployed environment.
+The reference implementation is intentionally small enough to inspect; it is not a production security appliance.
 
-## Reference artifacts
+## 12. Evidence boundary
 
-- `reference/authority_gate.py`
-- `reference/enforcement_broker.py`
-- `reference/durable_broker.py`
-- `reference/mediation_graph.py`
-- `reference/delegation.py`
-- `reference/receipt_chain.py`
-- `adversarial/aab_vectors.json`
-- `adversarial/bypass_topologies.json`
-- `schemas/signed_authority_lease.schema.json`
-- `schemas/broker_action_request.schema.json`
-- `schemas/broker_state.schema.json`
-- `schemas/broker_checkpoint.schema.json`
-- `schemas/decision_receipt.schema.json`
-- `tests/test_enforcement_broker.py`
-- `tests/test_durable_broker.py`
-- `tests/test_mediation_graph.py`
+AAB 0.4.1 materially strengthens the executable reference mechanisms but **does not establish A4 frontier-model containment**.
 
-## Status
+Current automated tests establish narrower propositions about the reference code: scope enforcement, parameter/effect contracts, binding hashes, replay controls, transactional state serialization, delegation monotonicity, ancestry/checkpoint behavior, and modeled bypass detection.
 
-AAB 0.4 is an experimental reference architecture with scoped policy enforcement, monotonic delegation, signed authority leases, replay controls, broker-owned cumulative accounting, durable authenticated enforcement state, rollback checkpoints, tamper-evident receipts, and structural bypass-path tests. Independent adversarial evaluation remains required.
+A4 remains an architecture-specific empirical claim requiring a real mediated environment, a capable adversarial agent, complete evaluation scope, reproducible failure criteria, and evidence that no equivalent unmediated effect was exercised.

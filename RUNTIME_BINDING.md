@@ -1,47 +1,91 @@
 # AMAS Runtime Binding Contract
 
-Status: Draft RC2  
-Purpose: runtime mechanics that implement AMAS governance without changing AMAS Core doctrine.
+**Status:** Draft RC3  
+**Purpose:** runtime mechanics that implement AMAS governance without changing AMAS Core doctrine.
 
 ## 1. Scope
 
-AMAS Core defines authority, canonicality, and mutation boundaries. Runtime Binding defines activation, preflight, append, repair, export, state transitions, operator-visible verification, and the seam to the Agent Authority Boundary (AAB).
+AMAS Core defines authority, semantic role, canonicality, and conflict/mutation boundaries. Runtime Binding defines activation, validation, append, repair, export, state transitions, and the seam to AAB for external side effects.
 
 ## 2. Core/runtime separation
 
-AMAS Core decides what counts as authoritative and what must not be silently rewritten. Runtime Binding defines how those constraints are represented and verified at runtime. AAB separately governs proposed external side effects.
+AMAS Core decides what counts as authoritative. Runtime Binding defines how those requirements are represented and verified at runtime. AMCS is one memory persistence reference. AAB separately governs external action authority.
 
-## 3. Activation contract
+## 3. Ingestion and semantic-role binding
 
-No mutation may occur without validated activation. A valid activation contract MUST expose a canonical root identifier/hash, root-uniqueness assertion, writable-ledger identifier/path, conformance profile, append/repair flags, activation timestamp, and activation receipt hash.
+Runtime ingestion MUST preserve enough trusted metadata to assign both:
+
+- `authority_tier`; and
+- `semantic_role` (`DIRECTIVE`, `EVIDENCE`, `OBSERVATION`, `INFERENCE`).
+
+Imperative wording MUST NOT elevate `EVIDENCE`, `OBSERVATION`, or `INFERENCE` into a directive.
+
+Where one message/document contains semantically distinct directives and quoted/evidentiary material, implementations SHOULD segment those units rather than let message boundaries silently transfer directive authority.
+
+A non-directive → directive transition MUST create a new auditable object issued by a principal already authorized to create that directive.
+
+## 4. Activation contract
+
+No authoritative mutation may occur without validated activation. A valid activation contract MUST expose at least:
+
+- canonical root identifier/hash;
+- root-uniqueness assertion;
+- writable-ledger identifier/path;
+- conformance profile;
+- append/repair flags;
+- activation timestamp;
+- activation receipt hash.
 
 If activation cannot be verified, the runtime remains non-mutating.
 
-## 4. Preflight
+## 5. Preflight
 
-Blocking checks SHOULD include canonical-root uniqueness, writable-ledger uniqueness, chain-tip integrity, schema compatibility, and manifest/hash consistency. Advisory checks may include derived-view synchronization and quarantine candidates.
+Blocking checks SHOULD include canonical-root uniqueness, writable-ledger uniqueness, chain-tip integrity, schema compatibility, provenance/semantic-role validity, and manifest/hash consistency.
 
-## 5. Append
+Derived-view synchronization and quarantine candidates may be advisory, but invalid/unprovenanced memory may not activate as authoritative state.
 
-Required sequence: stage → validate → hash → commit → regenerate derived views → emit receipt.
+## 6. Deterministic conflict handling
 
-Append MUST preserve provenance and lineage. Silent mutation is forbidden.
+Runtime conflict arbitration MUST implement the ordering in `SPEC.md`:
 
-## 6. Repair
+1. directive-role admissibility when behavior is at issue;
+2. tier precedence;
+3. explicit supersession;
+4. explicit scope specificity;
+5. recency;
+6. unresolved → halt/escalate.
 
-Repair is privileged. Allowed classes include wrapper regeneration, derived-ledger rebuild, provenance-preserving chain-tip correction, and migration. Silent repair is forbidden and every repair requires a receipt.
+A runtime MUST NOT add an undocumented probabilistic or model-selected tie-breaker.
 
-## 7. Invalid memory
+## 7. Append
 
-Invalid or unprovenanced memory does not activate. Quarantine/review workflows are optional; activation of invalid memory is not.
+Required sequence:
 
-## 8. Export proof bundle
+`stage → validate → hash → commit → regenerate derived views → emit receipt`
 
-No authoritative export should proceed without conformance validation. A proof bundle SHOULD expose conformance profile, chain-tip hash, ledger digest, export timestamp, export receipt hash, and operator-visible state hash.
+Append MUST preserve provenance/lineage and MUST NOT silently change semantic role or authority tier.
 
-## 9. Runtime states
+## 8. Repair
 
-Suggested states:
+Repair is privileged. Allowed classes may include wrapper regeneration, derived-ledger rebuild, provenance-preserving chain correction, and migration.
+
+Silent repair and silent canonical replacement are forbidden. Every authoritative repair requires a receipt.
+
+## 9. Export proof bundle
+
+Authoritative export MUST satisfy the declared conformance profile. A proof bundle SHOULD expose:
+
+- conformance profile;
+- canonical/state root hash;
+- ledger/content digest;
+- export timestamp;
+- export receipt hash;
+- operator-visible state hash;
+- applicable action-decision chain tip where AAB is active.
+
+## 10. Runtime states
+
+Recommended states:
 
 - `READ_ONLY_HYDRATE`
 - `VALIDATING`
@@ -52,37 +96,53 @@ Suggested states:
 - `CLOSED_FINALIZED`
 - `BLOCKED`
 
-`CLOSED_FINALIZED` and `BLOCKED` are terminal.
+`CLOSED_FINALIZED` and `BLOCKED` are terminal unless a new explicitly authorized runtime instance/context is created.
 
-## 10. Operator-visible verification
+## 11. AAB seam
 
-The runtime MUST expose reviewable verification surfaces appropriate to its declared profile: activation receipt, ledger digest, export receipt, state hash, and where AAB is active, action-decision receipts.
+A runtime that declares an A-axis profile MUST route real side effects through enforcement external to the acting model.
 
-## 11. Agent Authority Boundary seam
+Minimum flow:
 
-A runtime that exposes tools or external side effects and declares an A-axis profile MUST route proposed side effects through an enforcement component external to the acting model.
+1. agent proposes structured action;
+2. trusted adapter resolves the effective action and security-relevant effects;
+3. configured capability contract validates adapter-specific parameters/effects;
+4. runtime binds the request to the active authenticated lease;
+5. AAB validates lease validity/revocation, replay state, scope, credential/destination/effect ceilings, and cumulative budgets;
+6. exact prepared-action hash is included in the chained authorization receipt;
+7. durable state is committed before execution authority is released;
+8. only `ALLOW` carrying the same action binding reaches the registered adapter;
+9. the same immutable prepared object is dispatched.
 
-The minimum request/decision flow is:
+`ESCALATE` is not authorization. `SIMULATE` may reach only a non-real-effect simulation path consistent with its profile.
 
-1. model/agent proposes structured action
-2. runtime binds request to the active authority lease
-3. AAB validates policy freshness and scope
-4. AAB returns `ALLOW`, `DENY`, `ESCALATE`, or `SIMULATE`
-5. only `ALLOW` reaches the real side-effecting tool path
-6. decision receipt is persisted or exposed to the operator
+## 12. Fail-closed action behavior
 
-`SIMULATE` may reach a non-side-effecting simulation environment only. `ESCALATE` is not authorization.
+The following MUST NOT default to execution:
 
-The acting model MUST NOT be able to mutate its own authority lease through ordinary tool output or model-generated inference.
+- missing/malformed policy or request;
+- expired, not-yet-valid, revoked, or unverifiable lease;
+- unknown credential or capability contract;
+- out-of-scope target/destination/parameter/effect;
+- replayed/stale request;
+- budget exhaustion;
+- uncertain durable state;
+- authorization/execution-binding mismatch.
 
-## 12. Fail-closed behavior
+## 13. Transactional security state
 
-For A-axis runtimes, missing policy, malformed request, expired lease, unknown credential, exceeded hard budget, or unverifiable principal binding MUST NOT default to execution.
+An A2+ implementation with mutable replay/budget state MUST prevent concurrent authorization against the same stale state snapshot.
 
-## 13. Relationship to AMCS
+The reference uses a local SQLite transaction lock plus authenticated state reload/persist. Deployments may use different transactional mechanisms, but concurrent double spending of authority is non-conformant.
 
-AMCS remains a reference sealing/persistence protocol. AAB is a separate reference enforcement surface. Implementations may use either or both under AMAS Core governance.
+## 14. Rollback/fork evidence
 
-## 14. Status
+A higher-assurance A2/A4 implementation SHOULD retain rollback evidence outside the protected local state. A newer state presented against an older checkpoint must prove ancestry, not merely claim a larger generation number.
 
-This document is doctrine. Reference implementations demonstrate selected mechanics but do not, by themselves, establish production conformance or frontier-model containment.
+## 15. Relationship to AMCS
+
+AMCS remains a reference sealing/persistence protocol. AMCS 0.3.0 adds complete claimed v1.2.1 INTERNAL-profile surfaces, no-clobber sealed artifacts, content-root binding, optional HMAC root authentication, and generated-artifact conformance tests.
+
+## 16. Status
+
+This document is doctrine. Reference implementations demonstrate selected mechanics but do not establish production or frontier-model containment by themselves.

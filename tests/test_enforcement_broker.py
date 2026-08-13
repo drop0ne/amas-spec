@@ -14,6 +14,7 @@ spec.loader.exec_module(broker_mod)
 
 NOW = datetime(2026, 8, 12, 22, 30, tzinfo=timezone.utc)
 KEY = b"reference-test-key-not-for-production"
+BINDING = "a" * 64
 
 
 def policy():
@@ -25,6 +26,7 @@ def policy():
         "targets": ["sandbox://dataset"],
         "destinations": ["sandbox://dataset"],
         "credentials": [],
+        "capability_contracts": [],
         "max_side_effect": "observe",
         "budgets": {
             "max_actions": 3,
@@ -38,11 +40,14 @@ def policy():
     }
 
 
-def lease():
+def lease(*, not_before="2026-08-12T22:00:00Z"):
     value = {
+        "lease_version": 1,
         "lease_id": "LEASE-1",
         "issuer": "operator-root",
+        "key_id": "test-key-1",
         "issued_at": "2026-08-12T22:00:00Z",
+        "not_before": not_before,
         "max_request_age_seconds": 120,
         "signature_alg": "HMAC-SHA256",
         "policy": policy(),
@@ -97,6 +102,20 @@ class EnforcementBrokerTests(unittest.TestCase):
         self.assertEqual(receipt["authoritative_usage"]["actions"], 1)
         self.assertTrue(broker.verify_receipts())
 
+    def test_execution_binding_is_inside_chained_receipt(self):
+        broker = broker_mod.EnforcementBroker(lease(), KEY)
+        receipt = broker.authorize(request(), cost=cost(), now=NOW, execution_binding_hash=BINDING)
+        self.assertEqual(receipt["execution_binding_hash"], BINDING)
+        self.assertTrue(broker.verify_receipts())
+        broker.receipts[0]["execution_binding_hash"] = "b" * 64
+        self.assertFalse(broker.verify_receipts())
+
+    def test_invalid_execution_binding_fails_closed(self):
+        broker = broker_mod.EnforcementBroker(lease(), KEY)
+        receipt = broker.authorize(request(), cost=cost(), now=NOW, execution_binding_hash="not-a-hash")
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertTrue(receipt["reason"].startswith("invalid_envelope:"))
+
     def test_replayed_nonce_denied(self):
         broker = broker_mod.EnforcementBroker(lease(), KEY)
         broker.authorize(request(), cost=cost(), now=NOW)
@@ -104,6 +123,12 @@ class EnforcementBrokerTests(unittest.TestCase):
         receipt = broker.authorize(replay, cost=cost(), now=NOW)
         self.assertEqual(receipt["decision"], "DENY")
         self.assertEqual(receipt["reason"], "replay_nonce")
+
+    def test_short_nonce_denied_matches_schema_contract(self):
+        broker = broker_mod.EnforcementBroker(lease(), KEY)
+        receipt = broker.authorize(request(nonce="too-short"), cost=cost(), now=NOW)
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertEqual(receipt["reason"], "invalid_nonce")
 
     def test_sequence_gap_denied(self):
         broker = broker_mod.EnforcementBroker(lease(), KEY)
@@ -124,6 +149,20 @@ class EnforcementBrokerTests(unittest.TestCase):
         receipt = broker.authorize(request(timestamp=future), cost=cost(), now=NOW)
         self.assertEqual(receipt["decision"], "DENY")
         self.assertEqual(receipt["reason"], "request_from_future")
+
+    def test_lease_not_before_denied(self):
+        value = lease(not_before="2026-08-12T22:45:00Z")
+        broker = broker_mod.EnforcementBroker(value, KEY)
+        receipt = broker.authorize(request(), cost=cost(), now=NOW)
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertEqual(receipt["reason"], "lease_not_yet_valid")
+
+    def test_revoked_lease_denied(self):
+        registry = broker_mod.RevocationRegistry({"LEASE-1"})
+        broker = broker_mod.EnforcementBroker(lease(), KEY, revocation_checker=registry.is_revoked)
+        receipt = broker.authorize(request(), cost=cost(), now=NOW)
+        self.assertEqual(receipt["decision"], "DENY")
+        self.assertEqual(receipt["reason"], "lease_revoked")
 
     def test_broker_owned_cumulative_budget(self):
         broker = broker_mod.EnforcementBroker(lease(), KEY)
@@ -153,6 +192,7 @@ class EnforcementBrokerTests(unittest.TestCase):
         self.assertEqual(receipt["decision"], "ALLOW")
         self.assertEqual(receipt["authoritative_usage"]["network_calls"], 1)
         self.assertEqual(receipt["authoritative_usage"]["egress_bytes"], 10)
+        self.assertNotEqual(receipt["request_hash"], receipt["policy_request_hash"])
 
     def test_receipt_mutation_detected(self):
         broker = broker_mod.EnforcementBroker(lease(), KEY)

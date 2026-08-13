@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amcs/schemas/cell_root.json",
+  "title": "AMCS Cell Root Binding",
+  "type": "object",
+  "required": ["root_version", "cell_id", "case_study_id", "content_manifest_hash", "seal_receipt_hash", "cell_index_hash", "parent_cell_hash", "delta_type", "root_hash", "authentication_alg", "root_mac"],
+  "properties": {
+    "root_version": {"const": 1},
+    "cell_id": {"type": "string", "minLength": 1},
+    "case_study_id": {"type": "string", "minLength": 1},
+    "content_manifest_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "seal_receipt_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "cell_index_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "parent_cell_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "delta_type": {"type": ["string", "null"], "enum": ["additive", "corrective", "contextual", null]},
+    "root_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "authentication_alg": {"enum": ["NONE", "HMAC-SHA256"]},
+    "root_mac": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+  },
+  "allOf": [
+    {"if": {"properties": {"authentication_alg": {"const": "NONE"}}, "required": ["authentication_alg"]}, "then": {"properties": {"root_mac": {"type": "null"}}}},
+    {"if": {"properties": {"authentication_alg": {"const": "HMAC-SHA256"}}, "required": ["authentication_alg"]}, "then": {"properties": {"root_mac": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}}
+  ],
+  "additionalProperties": false
+}

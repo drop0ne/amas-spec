@@ -1,0 +1,112 @@
+{
+  "description": "Generic incident-shaped vectors for an allowed package/proxy capability. These vectors test parameter/equivalent-effect authority boundaries; they do not claim prevention of any historical incident.",
+  "contract_body": {
+    "adapter_id": "package_proxy",
+    "operation": "package_fetch",
+    "allowed_parameter_keys": ["package", "version"],
+    "required_parameter_keys": ["package", "version"],
+    "unrestricted_parameter_keys": [],
+    "parameter_allowlists": {
+      "package": ["safe-lib"],
+      "version": ["1.0.0"]
+    },
+    "allowed_effective_destinations": ["https://packages.example.internal"],
+    "allowed_credentials": ["package-read"],
+    "allow_redirects": false,
+    "allowed_filesystem_paths": [],
+    "allow_subprocess": false,
+    "allowed_subprocesses": [],
+    "allowed_secondary_destinations": []
+  },
+  "broker_request": {
+    "operation": "package_fetch",
+    "destination": "https://packages.example.internal",
+    "credential_ref": "package-read"
+  },
+  "vectors": [
+    {
+      "id": "baseline-authorized-package",
+      "parameters": {"package": "safe-lib", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": [],
+        "filesystem_paths": [],
+        "subprocesses": [],
+        "secondary_destinations": []
+      },
+      "expected_valid": true,
+      "expected_reason": "contract_authorized"
+    },
+    {
+      "id": "parameter-substitution",
+      "parameters": {"package": "unexpected-loader", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": [],
+        "filesystem_paths": [],
+        "subprocesses": [],
+        "secondary_destinations": []
+      },
+      "expected_valid": false,
+      "expected_reason": "contract_parameter_value:package"
+    },
+    {
+      "id": "redirect-from-allowed-proxy",
+      "parameters": {"package": "safe-lib", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": ["https://other.example"],
+        "filesystem_paths": [],
+        "subprocesses": [],
+        "secondary_destinations": []
+      },
+      "expected_valid": false,
+      "expected_reason": "contract_redirect"
+    },
+    {
+      "id": "local-file-effect",
+      "parameters": {"package": "safe-lib", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": [],
+        "filesystem_paths": ["/etc/credentials"],
+        "subprocesses": [],
+        "secondary_destinations": []
+      },
+      "expected_valid": false,
+      "expected_reason": "contract_filesystem_path"
+    },
+    {
+      "id": "subprocess-effect",
+      "parameters": {"package": "safe-lib", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": [],
+        "filesystem_paths": [],
+        "subprocesses": ["python"],
+        "secondary_destinations": []
+      },
+      "expected_valid": false,
+      "expected_reason": "contract_subprocess"
+    },
+    {
+      "id": "secondary-network-effect",
+      "parameters": {"package": "safe-lib", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": [],
+        "filesystem_paths": [],
+        "subprocesses": [],
+        "secondary_destinations": ["https://control.example"]
+      },
+      "expected_valid": false,
+      "expected_reason": "contract_secondary_destination"
+    },
+    {
+      "id": "compound-scope-expansion",
+      "parameters": {"package": "safe-lib", "version": "1.0.0"},
+      "security_effects": {
+        "redirect_chain": [],
+        "filesystem_paths": ["/proc/self/environ"],
+        "subprocesses": ["sh"],
+        "secondary_destinations": ["https://control.example"]
+      },
+      "expected_valid": false,
+      "expected_reason": "contract_filesystem_path"
+    }
+  ]
+}

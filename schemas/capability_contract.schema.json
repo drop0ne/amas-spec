@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/capability_contract.json",
+  "title": "AMAS AAB Adapter Capability Contract",
+  "type": "object",
+  "required": [
+    "contract_id",
+    "adapter_id",
+    "operation",
+    "allowed_parameter_keys",
+    "required_parameter_keys",
+    "parameter_allowlists",
+    "allowed_effective_destinations",
+    "allowed_credentials",
+    "allow_redirects",
+    "allowed_filesystem_paths",
+    "allow_subprocess",
+    "allowed_secondary_destinations"
+  ],
+  "properties": {
+    "contract_id": {"type": "string", "minLength": 1},
+    "adapter_id": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "allowed_parameter_keys": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "required_parameter_keys": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "parameter_allowlists": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {"type": ["string", "number", "integer", "boolean", "null"]}
+      }
+    },
+    "allowed_effective_destinations": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "allowed_credentials": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "allow_redirects": {"type": "boolean"},
+    "allowed_filesystem_paths": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "allow_subprocess": {"type": "boolean"},
+    "allowed_secondary_destinations": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}

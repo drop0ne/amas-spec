@@ -1,90 +1,123 @@
 # AMAS Design Rationale
 
-## Why Four Tiers
+## Why four authority tiers
 
-The four-tier hierarchy (CANONICAL / OPERATOR / SESSION / INFERRED) reflects the actual authority structure in deployed LLM systems:
+The four-tier hierarchy (CANONICAL / OPERATOR / SESSION / INFERRED) reflects distinct authority sources in deployed LLM systems:
 
-- **Tier 0 exists** because every model has behavioral boundaries that should not be overridable by any user or developer. These are constitutional.
-- **Tier 1 exists** because developers configure models for specific applications. Their instructions should constrain user behavior but not override platform safety.
-- **Tier 2 exists** because runtime context (user messages, tool outputs, retrieved documents) is the operational environment. It should inform behavior but not override configuration.
-- **Tier 3 exists** because models generate conclusions that are qualitatively different from their inputs. An inference is not a fact. Treating them identically is how hallucination propagates.
+- **Tier 0** represents foundational constraints that lower tiers cannot override.
+- **Tier 1** represents deployer/operator configuration within Tier 0.
+- **Tier 2** represents user and runtime context within Tiers 0–1.
+- **Tier 3** represents model-generated inference, which is qualitatively different from sourced material and carries the lowest authority.
 
-Three tiers would conflate developer and platform authority. Five or more tiers would add resolution complexity without matching real deployment patterns. Four is the minimum that captures the actual authority relationships.
+Three tiers would conflate platform and operator authority. More tiers may be useful in deployment-specific submodels, but AMAS Core keeps the constitutional hierarchy small.
 
-## Why Deterministic Conflict Resolution
+## Why authority tier and semantic role are separate
 
-AMAS uses deterministic rules (applied in strict order) rather than probabilistic or learned arbitration for three reasons:
+A major ambiguity in earlier AMAS 2.0 drafts was that Tier 2 included both user directives and retrieved/tool data. That allowed the phrase **data is not instruction** to exist as design intent without a machine representation.
 
-1. **Auditability.** A deterministic system produces the same resolution given the same inputs. An auditor can verify that the correct rule was applied.
-2. **Predictability.** Developers integrating AMAS need to know how conflicts will be resolved before they occur.
-3. **Simplicity.** Five rules, applied in order, first match wins.
+The revised Memory Object therefore adds a second dimension:
 
-## Why Explicit Inference Marking
+- `DIRECTIVE`
+- `EVIDENCE`
+- `OBSERVATION`
+- `INFERENCE`
 
-The requirement that all Tier 3 content carry `inference_marker: true` exists because the most common authority failure in LLM systems is treating model-generated conclusions as established facts.
+This prevents source authority from being confused with operational meaning.
 
-This happens:
-- within a session, when the model later reuses its own prior inferences as facts
-- across agents, when one agent's inference is treated as another agent's session input
+A retrieved document can be legitimate Tier 2 material while still being `EVIDENCE`, not a command surface. A tool result can be Tier 2 `OBSERVATION` even if the returned bytes contain imperative text. A user message may be segmented into both a Tier 2 `DIRECTIVE` and quoted Tier 2 `EVIDENCE`.
 
-Inference marking makes epistemic status visible.
+This distinction addresses same-tier prompt-injection/authority-laundering cases that tier precedence alone cannot resolve.
 
-## Why External Enforcement
+## Why imperative wording is irrelevant to semantic role
 
-AMAS is designed to be enforced outside the model, not inside it.
+If wording could determine role, an attacker could create authority merely by writing text that resembles a system prompt or command.
 
-- LLMs do not natively maintain authority graphs.
-- External enforcement is auditable.
-- External enforcement is model-agnostic.
+AMAS therefore requires semantic role to come from trusted ingestion/segmentation metadata and authorized transitions—not persuasion, capitalization, role-play language, or model interpretation.
 
-The cost is middleware.
-The benefit is that the model works today with existing systems.
+## Why deterministic conflict resolution
 
-## Why Split Governance from Runtime Binding
+AMAS uses deterministic rules rather than probabilistic arbitration because security-sensitive authority should be:
 
-Earlier AMAS drafts and supporting materials mixed immutable governance doctrine with runtime bookkeeping and workflow mechanics.
+1. **auditable** — reviewers can reconstruct why a result won;
+2. **predictable** — implementations can be compared against the same vectors;
+3. **fail-closed** — unresolved conflicts do not become model-selected authority.
 
-That created a structural risk:
-- governance rules could become entangled with implementation details
-- runtime conveniences could be mistaken for constitutional rules
-- conformance could become ambiguous because the spec mixed what must be true with how one runtime currently does it
+The revised ordering is:
 
-The split resolves that:
+1. tier precedence;
+2. explicit supersession;
+3. explicit scope specificity;
+4. recency;
+5. halt/escalate.
 
-- `SPEC.md` defines immutable governance doctrine
-- `RUNTIME_BINDING.md` defines activation, validation, append, repair, export, and state-transition mechanics
-- `CONFORMANCE_PROFILES.md` defines capability ladders and migration from legacy conformance levels
+Semantic-role admissibility occurs before directive arbitration: non-directive content cannot become a candidate instruction.
 
-This keeps the constitutional layer small and stable while allowing runtime doctrine to evolve.
+## Why specificity precedes recency
 
-## Why Immutable Sealed Cells (AMCS)
+Earlier drafts placed recency before specificity. In practice that made specificity nearly unreachable and allowed newly introduced generic same-tier instructions to displace older task-scoped instructions.
 
-The AMCS reference implementation uses immutable, hash-verified bundles rather than mutable databases for memory persistence.
+The revised Rule 3 defines specificity only by explicit `scope_path` prefix containment. Natural-language similarity, embedding distance, token count, and model confidence are not specificity evidence.
 
-- **Immutability prevents silent revision**
-- **Hash verification prevents tampering**
-- **Full-crawl prevents selective omission**
+This makes the ordering deterministic and prevents a generic late-arriving object from silently widening a narrower active directive.
 
-The tradeoff is storage efficiency.
-Delta cells and supercell assembly provide evolution without mutation.
+## Why Rule 5 has only one outcome
 
-## Why New Core Invariants Were Added
+Earlier draft language allowed either a "more restrictive interpretation" or operator escalation. That admitted two conforming outputs for identical inputs and therefore contradicted AMAS's deterministic design goal.
 
-The additional governance invariants exist to address failure surfaces that were previously implicit rather than explicit:
+Rule 5 now has one result: **HALT/ESCALATE**. An implementation may have deployment-specific presentation or recovery mechanics, but the disputed mutation/action is not authorized by the unresolved conflict.
 
-- **single canonical root** prevents wrapper/canonical ambiguity
-- **single writable truth ledger** prevents ledger drift
-- **hydrate never mutates** prevents load-time laundering or silent normalization
-- **derived artifacts cannot define truth or gate reads** prevents secondary views from becoming covert authority
-- **sealed memory as durable memory** prevents unsealed context from being silently treated as canon
+## Why explicit inference marking
 
-These invariants were already directionally present in AMCS practice.
-The governance split makes them explicit at the AMAS level.
+Models can recycle their own conclusions as though they were sourced facts, and multi-agent pipelines can erase inferential origin as outputs are passed between agents.
 
-## Why "Memory Object" Rather Than "Token" or "Message"
+AMAS therefore makes Tier 3 and `INFERENCE` mutually binding: Tier 3 must be `INFERENCE` with `inference_marker: true`, and `INFERENCE` must be Tier 3.
 
-AMAS operates at the semantic level — a fact, an instruction, a constraint, a conclusion — rather than at the token or message level.
+Inference cannot be a direct directive.
 
-Tokens are model-internal representations with no stable semantic boundary.
-Messages are too coarse.
-Memory Objects match how authority actually works: a specific claim has a specific source at a specific authority level.
+## Why semantic-role transition creates a new object
+
+Changing evidence into an instruction is itself an authority-bearing act. Mutating an `EVIDENCE` object into a `DIRECTIVE` would erase who made that decision.
+
+AMAS therefore requires an authorized issuer to create a new directive and preserve the source material in provenance. This keeps "data → decision" transformations visible for audit.
+
+## Why external enforcement
+
+AMAS is designed to be enforced outside the model rather than trusting the model to police its own authority graph.
+
+- external enforcement is inspectable;
+- it is model-agnostic;
+- it can fail closed independently of the model's reasoning;
+- it prevents model-generated rationale from becoming authorization.
+
+The cost is additional middleware and trusted state. AAB defines the corresponding action-authority boundary for side-effecting agents.
+
+## Why split governance from runtime binding
+
+Earlier supporting materials mixed constitutional rules with runtime bookkeeping. That created a risk that implementation conveniences could be mistaken for core authority rules.
+
+The split is intentional:
+
+- `SPEC.md` — AMAS Core authority doctrine;
+- `schemas/memory_object.schema.json` — normative machine representation of Memory Objects;
+- `RUNTIME_BINDING.md` — generalized activation/mutation/export mechanics;
+- `CONFORMANCE_PROFILES.md` — capability/evidence ladders;
+- `docs/AGENT_AUTHORITY_BOUNDARY.md` — external action authority;
+- AMCS — a reference persistence/sealing protocol.
+
+## Why one normative Memory Object schema
+
+Duplicating a JSON Schema inside prose and in `/schemas` allowed the two representations to drift. The standalone schema is now the sole machine-readable normative source. Prose explains its semantics but should not carry an independently editable copy.
+
+If prose and schema disagree, the discrepancy is a defect to repair rather than an invitation for implementations to choose the weaker interpretation.
+
+## Why immutable sealed cells (AMCS)
+
+AMCS uses immutable, hash-verified bundles to make persistence reviewable. The design goal is to prevent silent revision and preserve provenance across selective rehydration.
+
+Hash consistency alone is not equivalent to provenance authenticity; higher-assurance sealing may require authenticated/externally anchored roots. AMCS hardening tracks this distinction explicitly.
+
+## Why Memory Objects rather than tokens or messages
+
+Tokens are model-internal units without stable semantic authority boundaries. Messages are often too coarse because one message can contain commands, quotations, evidence, and inference simultaneously.
+
+Memory Objects are semantic units whose authority and role can be represented independently. Implementations must make segmentation decisions explicit enough for audit rather than allowing message boundaries to silently determine authority.

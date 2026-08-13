@@ -25,6 +25,7 @@ def parent_policy():
         "targets": ["repo://amas", "sandbox://artifact"],
         "destinations": ["api://github"],
         "credentials": ["github-read"],
+        "capability_contracts": ["CAP-READ", "CAP-LIST"],
         "max_side_effect": "reversible_write",
         "budgets": {
             "max_actions": 100,
@@ -48,6 +49,7 @@ def child_policy():
         "targets": ["repo://amas"],
         "destinations": ["api://github"],
         "credentials": ["github-read"],
+        "capability_contracts": ["CAP-READ"],
         "max_side_effect": "observe",
         "budgets": {
             "max_actions": 20,
@@ -74,6 +76,12 @@ class DelegationTests(unittest.TestCase):
     def test_credential_widening_denied(self):
         c = child_policy(); c["credentials"].append("admin-token")
         self.assertFalse(delegation.verify_child_policy(parent_policy(), c)["valid"])
+
+    def test_capability_contract_widening_denied(self):
+        c = child_policy(); c["capability_contracts"].append("CAP-ADMIN")
+        result = delegation.verify_child_policy(parent_policy(), c)
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["reason"], "subset:capability_contracts")
 
     def test_budget_widening_denied(self):
         c = child_policy(); c["budgets"]["max_actions"] = 101

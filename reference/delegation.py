@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """AMAS AAB monotonic delegation verifier.
 
-Child authority must be a subset of parent authority. This module validates
-that a proposed child policy cannot widen objectives, operations, targets,
-destinations, credentials, side effects, budgets, expiry, or delegation depth.
+Child authority must be a subset of parent authority across every security-
+relevant dimension, including adapter capability contracts.
 """
 from __future__ import annotations
 
@@ -31,6 +30,7 @@ SET_FIELDS = (
     "targets",
     "destinations",
     "credentials",
+    "capability_contracts",
 )
 
 
@@ -72,7 +72,6 @@ def verify_child_policy(parent: dict[str, Any], child: dict[str, Any]) -> dict[s
         parent_depth = int(parent.get("max_delegation_depth", 0))
         child_depth = int(child.get("max_delegation_depth", 0))
         checks.append(("delegation_depth_remaining", parent_depth > 0 and child_depth <= parent_depth - 1))
-
         if parent_depth <= 0:
             checks.append(("parent_may_delegate", False))
 
@@ -93,10 +92,7 @@ def verify_child_policy(parent: dict[str, Any], child: dict[str, Any]) -> dict[s
 
 
 def derive_child_policy(parent: dict[str, Any], *, policy_id: str, principal: str, **overrides: Any) -> dict[str, Any]:
-    """Create a child candidate by narrowing a parent, then verify it.
-
-    Raises ValueError if the requested child widens authority.
-    """
+    """Create a child candidate by narrowing a parent, then verify it."""
     child = {
         "policy_id": policy_id,
         "parent_policy_id": parent["policy_id"],
@@ -106,6 +102,7 @@ def derive_child_policy(parent: dict[str, Any], *, policy_id: str, principal: st
         "targets": list(parent.get("targets", [])),
         "destinations": list(parent.get("destinations", [])),
         "credentials": list(parent.get("credentials", [])),
+        "capability_contracts": list(parent.get("capability_contracts", [])),
         "max_side_effect": parent["max_side_effect"],
         "budgets": dict(parent["budgets"]),
         "max_delegation_depth": max(int(parent.get("max_delegation_depth", 0)) - 1, 0),

@@ -1,4 +1,3 @@
-import copy
 import json
 import sys
 import tempfile
@@ -21,9 +20,12 @@ COST = {"actions": 1, "network_calls": 1, "egress_bytes": 10, "wall_clock_second
 
 def lease():
     value = {
+        "lease_version": 1,
         "lease_id": "LEASE-1",
         "issuer": "operator",
+        "key_id": "lease-test-key",
         "issued_at": "2026-08-12T21:00:00Z",
+        "not_before": "2026-08-12T21:00:00Z",
         "max_request_age_seconds": 300,
         "signature_alg": "HMAC-SHA256",
         "policy": {
@@ -34,6 +36,7 @@ def lease():
             "targets": ["sandbox://a"],
             "destinations": ["sandbox://a"],
             "credentials": [],
+            "capability_contracts": [],
             "max_side_effect": "simulate",
             "budgets": {
                 "max_actions": 10,
@@ -50,7 +53,7 @@ def lease():
     return value
 
 
-def request(seq=1, nonce="nonce-1"):
+def request(seq=1, nonce="nonce-00000000001"):
     return {
         "request_id": f"R{seq}",
         "lease_id": "LEASE-1",
@@ -80,8 +83,26 @@ class DurableBrokerTests(unittest.TestCase):
             self.assertEqual(restored.state_generation, generation)
             self.assertEqual(restored.last_sequence, 1)
             self.assertEqual(restored.usage["network_calls"], 1)
-            self.assertIn("nonce-1", restored.seen_nonces)
+            self.assertIn("nonce-00000000001", restored.seen_nonces)
             self.assertTrue(restored.verify_receipts())
+            self.assertEqual(len(restored.ancestor_state_hashes), restored.state_generation - 1)
+
+    def test_two_stale_broker_instances_do_not_double_spend_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broker-state.json"
+            first = DurableEnforcementBroker(lease(), LEASE_KEY, state_path=path, state_key=STATE_KEY)
+            second = DurableEnforcementBroker(lease(), LEASE_KEY, state_path=path, state_key=STATE_KEY)
+
+            r1 = first.authorize(request(), cost=COST, now=NOW)
+            self.assertEqual(r1["decision"], "ALLOW")
+            r2 = second.authorize(request(2, "nonce-00000000002"), cost=COST, now=NOW)
+            self.assertEqual(r2["decision"], "ALLOW")
+
+            restored = DurableEnforcementBroker(lease(), LEASE_KEY, state_path=path, state_key=STATE_KEY)
+            self.assertEqual(restored.last_sequence, 2)
+            self.assertEqual(restored.usage["actions"], 2)
+            self.assertEqual(restored.usage["network_calls"], 2)
+            self.assertEqual(restored.receipt_verification()["count"], 2)
 
     def test_replay_remains_denied_after_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -110,6 +131,7 @@ class DurableBrokerTests(unittest.TestCase):
             broker.authorize(request(), cost=COST, now=NOW)
             checkpoint = broker.create_checkpoint(CHECKPOINT_KEY, now=NOW)
             self.assertTrue(verify_checkpoint(checkpoint, CHECKPOINT_KEY))
+            self.assertEqual(checkpoint["checkpoint_version"], 2)
 
     def test_tampered_checkpoint_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,14 +153,27 @@ class DurableBrokerTests(unittest.TestCase):
             broker.authorize(request(), cost=COST, now=NOW)
             checkpoint = broker.create_checkpoint(CHECKPOINT_KEY, now=NOW)
 
-            # Restore an older state file that still has a valid MAC. Integrity
-            # alone accepts it; the independently retained checkpoint must not.
             path.write_bytes(old_state)
             with self.assertRaisesRegex(DurabilityError, "rollback detected"):
                 DurableEnforcementBroker(
                     lease(), LEASE_KEY, state_path=path, state_key=STATE_KEY,
                     checkpoint=checkpoint, checkpoint_key=CHECKPOINT_KEY,
                 )
+
+    def test_newer_state_must_descend_from_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broker-state.json"
+            broker = DurableEnforcementBroker(lease(), LEASE_KEY, state_path=path, state_key=STATE_KEY)
+            broker.authorize(request(), cost=COST, now=NOW)
+            checkpoint = broker.create_checkpoint(CHECKPOINT_KEY, now=NOW)
+            broker.authorize(request(2, "nonce-00000000002"), cost=COST, now=NOW)
+
+            restored = DurableEnforcementBroker(
+                lease(), LEASE_KEY, state_path=path, state_key=STATE_KEY,
+                checkpoint=checkpoint, checkpoint_key=CHECKPOINT_KEY,
+            )
+            self.assertGreater(restored.state_generation, checkpoint["generation"])
+            self.assertIn(checkpoint["state_hash"], restored.ancestor_state_hashes)
 
     def test_exact_checkpoint_restore_succeeds(self):
         with tempfile.TemporaryDirectory() as tmp:
