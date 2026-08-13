@@ -1,12 +1,15 @@
 import copy
 import importlib.util
 import json
+import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE = ROOT / "reference" / "authority_gate.py"
+REFERENCE = ROOT / "reference"
+sys.path.insert(0, str(REFERENCE))
+MODULE = REFERENCE / "authority_gate.py"
 spec = importlib.util.spec_from_file_location("authority_gate", MODULE)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
