@@ -2,41 +2,41 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/amas/schemas/child_authority_policy.json",
   "title": "AMAS AAB Child Authority Policy",
+  "description": "Delegated authority policy bound to exact parent identity/hash and Canonical JSON v1 integer bounds.",
   "type": "object",
   "required": [
-    "policy_id",
-    "parent_policy_id",
-    "principal",
-    "objectives",
-    "operations",
-    "targets",
-    "max_side_effect",
-    "budgets",
-    "expires_at"
+    "policy_id", "parent_policy_id", "parent_policy_hash", "principal",
+    "objectives", "operations", "targets", "max_side_effect", "budgets", "expires_at"
   ],
   "properties": {
     "policy_id": {"type": "string", "minLength": 1},
     "parent_policy_id": {"type": "string", "minLength": 1},
+    "parent_policy_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "principal": {"type": "string", "minLength": 1},
     "objectives": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "operations": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "targets": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "destinations": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true, "default": []},
     "credentials": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true, "default": []},
-    "capability_contracts": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true, "default": []},
+    "capability_contracts": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^cap-sha256:[0-9a-f]{64}$"},
+      "uniqueItems": true,
+      "default": []
+    },
     "max_side_effect": {"enum": ["observe", "simulate", "reversible_write", "persistent_write", "privileged_change"]},
     "budgets": {
       "type": "object",
       "required": ["max_actions", "max_network_calls", "max_egress_bytes", "max_wall_clock_seconds"],
       "properties": {
-        "max_actions": {"type": "integer", "minimum": 0},
-        "max_network_calls": {"type": "integer", "minimum": 0},
-        "max_egress_bytes": {"type": "integer", "minimum": 0},
-        "max_wall_clock_seconds": {"type": "integer", "minimum": 0}
+        "max_actions": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "max_network_calls": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "max_egress_bytes": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "max_wall_clock_seconds": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
       },
       "additionalProperties": false
     },
-    "max_delegation_depth": {"type": "integer", "minimum": 0, "default": 0},
+    "max_delegation_depth": {"type": "integer", "minimum": 0, "maximum": 9007199254740991, "default": 0},
     "expires_at": {"type": "string", "format": "date-time"},
     "operator_escalation": {"type": "boolean", "const": false}
   },
