@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Strict AMAS 2.0-draft Memory Object admission checks.
 
-The JSON Schema remains the normative machine-readable contract. This module
-provides a standard-library runtime admission path so authority arbitration does
-not operate on objects that would be invalid under that contract.
+The JSON Schema remains the normative machine-readable structural contract.
+This module mirrors the security-relevant schema rules with standard-library
+checks so authority arbitration never operates on malformed Memory Objects.
+
+Authentication is deliberately not inferred from self-asserted metadata.
+`authn_context` and provenance make an authority-bearing transition traceable;
+a trusted caller/verifier must separately establish that the asserted actor was
+actually authorized for the transition.
 """
 from __future__ import annotations
 
@@ -74,11 +79,13 @@ def _validate_provenance(value: Any) -> dict[str, Any] | None:
     chain = value["chain"]
     if not isinstance(chain, list) or any(not isinstance(item, str) or not item for item in chain):
         raise MemoryObjectValidationError("provenance.chain must be an array of non-empty strings")
+    if len(chain) != len(set(chain)):
+        raise MemoryObjectValidationError("provenance.chain must not contain duplicates")
     return value
 
 
 def validate_memory_object(obj: dict[str, Any]) -> None:
-    """Raise MemoryObjectValidationError unless obj satisfies runtime schema semantics."""
+    """Raise unless *obj* satisfies the runtime Memory Object contract."""
     if not isinstance(obj, dict):
         raise MemoryObjectValidationError("Memory Object must be an object")
     missing = sorted(_REQUIRED_FIELDS - set(obj))
@@ -145,24 +152,30 @@ def validate_memory_object(obj: dict[str, Any]) -> None:
         _nonempty_string(authn_context, "authn_context")
     provenance = _validate_provenance(obj.get("provenance"))
 
-    if any(value is not None for value in (escalated_from, escalated_by, authn_context)):
+    # Escalation is a distinct authority-bearing transition. A generic
+    # authn_context may also support supersession, so authn_context by itself is
+    # not treated as proof that escalation occurred.
+    escalation_present = escalated_from is not None or escalated_by is not None
+    if escalation_present:
         if escalated_from is None or escalated_by is None or authn_context is None or provenance is None:
             raise MemoryObjectValidationError("escalation metadata must be complete and provenance-bound")
+        if tier >= escalated_from:
+            raise MemoryObjectValidationError("escalation target must be a strictly higher authority tier")
 
     supersedes = obj.get("supersedes")
     if supersedes is not None:
         _nonempty_string(supersedes, "supersedes")
+        if supersedes == obj["object_id"]:
+            raise MemoryObjectValidationError("Memory Object cannot supersede itself")
         if authn_context is None or provenance is None:
             raise MemoryObjectValidationError("supersession requires authenticated provenance")
 
 
 def supersession_is_traceable(candidate: dict[str, Any], superseded: dict[str, Any]) -> bool:
-    """Return whether an explicit supersession carries minimally auditable proof.
+    """Check structural traceability of a same-tier supersession claim.
 
-    Authority-tier assignment and authentication-context validity remain trusted
-    ingestion responsibilities. The resolver additionally requires an exact
-    superseded object reference, authenticated context, provenance rooted at the
-    candidate source, and a provenance chain containing the superseded object.
+    This check is necessary but not sufficient authorization. The conflict
+    resolver additionally requires a trusted supersession authorizer callback.
     """
     try:
         validate_memory_object(candidate)
@@ -175,11 +188,17 @@ def supersession_is_traceable(candidate: dict[str, Any], superseded: dict[str, A
         provenance = candidate.get("provenance")
         if not isinstance(authn_context, str) or not authn_context:
             return False
-        if not isinstance(provenance, dict):
-            return False
-        if provenance.get("origin") != candidate.get("source_id"):
+        if not isinstance(provenance, dict) or provenance.get("origin") != candidate.get("source_id"):
             return False
         chain = provenance.get("chain")
-        return isinstance(chain, list) and superseded["object_id"] in chain
+        if not isinstance(chain, list) or len(chain) < 2:
+            return False
+        # The provenance must describe a forward transition from the exact
+        # superseded object to the candidate, not merely mention both IDs.
+        return (
+            chain[0] == superseded["object_id"]
+            and chain[-1] == candidate["object_id"]
+            and len(chain) == len(set(chain))
+        )
     except (MemoryObjectValidationError, KeyError, TypeError, ValueError):
         return False
