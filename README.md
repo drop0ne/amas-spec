@@ -4,7 +4,7 @@
 
 - **AMAS Core:** 2.0-draft, revision 2026-08-12
 - **AAB extension:** 0.4.1-draft hardening line
-- **AMCS reference runtime:** 0.3.0 implementing the AMCS v1.2.1 INTERNAL profile
+- **AMCS reference runtime:** 0.3.3 implementing the tested AMCS v1.2.1 INTERNAL surfaces described below
 - **Status:** research draft; open for review; no production-containment certification claim
 - **Author:** Jacob Dougherty
 
@@ -55,7 +55,7 @@ Imperative text inside a retrieved document, tool result, quotation, or inferenc
 After directive-role admissibility, conflicts are resolved in this order:
 
 1. tier precedence;
-2. explicit supersession;
+2. explicit authenticated/provenance-bound supersession;
 3. explicit scope specificity using structural `scope_path` prefix containment;
 4. recency;
 5. unresolved conflict → **HALT / ESCALATE**.
@@ -63,6 +63,12 @@ After directive-role admissibility, conflicts are resolved in this order:
 There is no model-selected fallback for an unresolved authority conflict.
 
 See `SPEC.md`, `schemas/memory_object.schema.json`, `reference/conflict_resolution.py`, and `adversarial/amas_conflict_vectors.json`.
+
+## Portable machine types
+
+Normative wire values are language-neutral but restricted to domains that map without ambiguity to fixed-width C/C++ representations. Security integers remain within Canonical JSON v1's `±(2^53-1)` interoperability range, which is directly representable by `int64_t`/`uint64_t`; authority tiers and compact enums fit fixed-width byte-sized representations; hashes use 32-byte internal values and 64-character lowercase hexadecimal JSON strings; booleans remain distinct from integers.
+
+See `docs/PORTABLE_TYPES.md` and `docs/CANONICAL_JSON.md`.
 
 ## AAB 0.4.1-draft
 
@@ -129,9 +135,9 @@ State version 2 also carries `previous_state_hash` and an explicit ancestry list
 
 This is a compact reference, not a recommendation to use local JSON/HMAC state as a production distributed security store.
 
-## AMCS 0.3.0 / v1.2.1 INTERNAL
+## AMCS 0.3.3 / v1.2.1 INTERNAL
 
-The AMCS reference runtime now emits and verifies the v1.2.1 INTERNAL-profile surfaces it claims, including:
+The AMCS reference runtime emits and verifies the currently tested v1.2.1 INTERNAL-profile surfaces, including:
 
 - complete chat crawl;
 - prompt/response causality with explicit `no_response_required` accounting;
@@ -149,6 +155,8 @@ The AMCS reference runtime now emits and verifies the v1.2.1 INTERNAL-profile su
 - delta lineage fields;
 - bounded traversal-safe archive extraction;
 - child-cell verification before supercell assembly.
+
+ODT canonical-narrative interpretation and richer cross-cell supercell reasoning remain subject to the AMCS conformance boundary and must not be inferred merely from archive/sealing support.
 
 The optional HMAC mode is a reference authenticity mechanism. Production signing/anchoring keys should reside outside the model/runtime compromise domain.
 
@@ -211,9 +219,12 @@ docs/AGENT_AUTHORITY_BOUNDARY.md
 docs/EXECUTION_BINDING.md
 docs/THREAT_MODEL.md
 docs/AUTHORITY_LAUNDERING.md
+docs/CANONICAL_JSON.md
+docs/PORTABLE_TYPES.md
 docs/DESIGN_RATIONALE.md
 
 reference/amcs.py
+reference/memory_object_validation.py
 reference/conflict_resolution.py
 reference/authority_gate.py
 reference/enforcement_broker.py
@@ -250,8 +261,10 @@ This repository does **not** establish that AMAS/AAB contains arbitrary frontier
 - independent checkpoint-anchor adapter in a genuinely separate failure domain;
 - multi-agent revocation/negotiation protocol across providers;
 - independent external evaluation;
-- publication/preprint package and deliberate licensing review.
+- publication/preprint package.
 
 ## License
 
-See `LICENSE`. The licensing/public-release posture should be reviewed deliberately before a public release; this hardening work does not change the repository license.
+Copyright (c) 2026 Jacob Dougherty. **All Rights Reserved.**
+
+No open-source license is granted. See `LICENSE` for the repository notice.
