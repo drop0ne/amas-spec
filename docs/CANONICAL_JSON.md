@@ -5,87 +5,57 @@
 
 ## Purpose
 
-Cryptographic hashes are meaningful only if every implementation serializes the same logical security object to the same bytes.
-
-Ordinary JSON serialization options are not sufficient as a cross-runtime security contract. In particular, floating-point rendering, non-finite values, Unicode edge cases, non-string object keys, and implementation-specific extensions can produce different bytes or different acceptance behavior.
-
-Canonical JSON v1 therefore deliberately narrows the value domain used by AMAS/AAB security hashes.
+Cryptographic identities are meaningful only if independent implementations serialize the same security object to the same bytes. Canonical JSON v1 therefore defines a deliberately narrow, deterministic JSON subset rather than relying on a runtime's default serializer.
 
 ## Allowed value model
 
 Security objects hashed or authenticated under Canonical JSON v1 may contain only:
 
-- JSON objects with **string keys only**;
-- arrays, preserving array order;
-- strings that encode as valid UTF-8 Unicode scalar sequences;
-- integers;
-- `true` / `false`;
-- `null`.
+- objects with **string keys only**;
+- arrays, preserving order;
+- strings containing Unicode scalar values (no lone surrogates);
+- integers in the inclusive range `[-9007199254740991, 9007199254740991]` (`±(2^53-1)`);
+- `true`, `false`, and `null`.
 
-The following are forbidden:
+Forbidden values include floating-point numbers (including finite floats), `NaN`, infinities, integers outside the interoperable safe range, surrogate code points, non-string object keys, sets, tuples, bytes, or custom language objects.
 
-- floating-point values, even finite ones;
-- `NaN`, `Infinity`, `-Infinity`;
-- surrogate code points;
-- non-string object keys;
-- sets, tuples, byte strings, custom objects, or other language-specific values.
+## Property ordering
 
-## Serialization
+Object keys are sorted lexicographically by their **UTF-16 code units**, compared as unsigned 16-bit values. This rule is explicit because Unicode scalar/code-point ordering differs from UTF-16 ordering for some supplementary-plane characters.
 
-Canonical bytes are produced as follows:
+Array order is never changed.
 
-1. recursively validate the allowed value model;
-2. sort object keys by the runtime's Unicode-string ordering used by the reference implementation;
-3. preserve array order;
-4. emit UTF-8 directly rather than ASCII-only `\u` escaping;
-5. emit no insignificant whitespace;
-6. use ordinary JSON literals for integers, booleans, strings, arrays, objects, and null.
+## String serialization
 
-The Python reference is equivalent to the validated subset of:
+Strings are emitted as JSON strings using the following deterministic rules:
 
-```python
-json.dumps(
-    value,
-    sort_keys=True,
-    separators=(",", ":"),
-    ensure_ascii=False,
-    allow_nan=False,
-).encode("utf-8", errors="strict")
-```
+- `"` becomes `\"`;
+- `\` becomes `\\`;
+- U+0008, U+0009, U+000A, U+000C, and U+000D use `\b`, `\t`, `\n`, `\f`, and `\r`;
+- other U+0000–U+001F characters use lowercase `\u00xx` escapes;
+- all other Unicode scalar values are emitted directly and encoded as UTF-8;
+- lone surrogate code points are invalid.
 
-The validation step is mandatory; the serializer call alone is not the complete contract.
+No insignificant whitespace is emitted.
 
-## Why integers only
+## Integers only
 
-The current security objects do not require floating-point authority values. Cross-language floating-point canonicalization adds complexity and unnecessary ambiguity.
+The authority/security objects in this repository do not require binary floating-point values. Excluding floats avoids cross-runtime formatting and rounding ambiguity. The safe integer bound avoids silent precision loss in common JSON runtimes whose exact integer interoperability is limited by IEEE-754 binary64.
 
-If an adapter needs a fractional domain value, it should define a stable representation before the value enters the AAB security object—for example:
-
-- scaled integer units; or
-- a validated canonical decimal string under an adapter-specific capability contract.
-
-A deployment must not silently hash native binary floating-point values and call that equivalent to Canonical JSON v1.
+If an adapter needs a fractional domain value, it MUST normalize it before the value enters an AAB security object, for example as a scaled integer or an adapter-defined canonical decimal string.
 
 ## Hashing
 
-Unless a more specific normative document says otherwise:
+Unless a more specific normative document states otherwise:
 
 ```text
-SHA-256 = sha256(canonical_json_v1_bytes(object))
+SHA-256 = sha256(canonical_json_v1_utf8_bytes(object))
 ```
 
-This encoding is used by the hardened reference for objects such as:
+The hardened reference applies this encoding to authority policies and requests, signed leases, capability-contract identities, prepared-action bindings, exact parent-policy delegation hashes, AAB decision receipts, and durable broker hash/MAC inputs that use the shared broker canonicalization path.
 
-- authority policies and requests;
-- authority leases;
-- capability-contract identities;
-- prepared-action bindings;
-- delegation parent-policy hashes;
-- AAB decision receipts;
-- durable state/checkpoint MAC/hash inputs through the broker canonicalization path.
-
-AMCS has separate file/archive hashing rules; JSON objects that use the shared canonical helper follow this encoding where stated.
+AMCS file/archive hashing remains byte-oriented under the AMCS specification; AMCS JSON structures use their separately documented binding rules.
 
 ## Compatibility
 
-Changing the canonical encoding changes cryptographic identity. A future Canonical JSON v2 would therefore require explicit versioning/migration rather than silently reinterpreting existing hashes, signatures, contract IDs, receipts, or parent-policy bindings.
+Changing any rule in this document changes cryptographic identity. A future Canonical JSON v2 therefore requires explicit versioning/migration rather than silently reinterpreting existing signatures, hashes, contract IDs, receipts, or parent-policy bindings.
