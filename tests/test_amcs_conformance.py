@@ -16,8 +16,8 @@ import amcs
 
 
 class AMCSConformanceTests(unittest.TestCase):
-    def _chat(self, root: Path, messages=None) -> Path:
-        path = root / "chat.json"
+    def _chat(self, root: Path, messages=None, name="chat.json") -> Path:
+        path = root / name
         path.write_text(json.dumps(messages or [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "world"},
@@ -29,7 +29,10 @@ class AMCSConformanceTests(unittest.TestCase):
             "input": str(chat), "out_dir": str(root / "out"), "cell_name": "CELL_1",
             "scope": "entire_chat", "primary_narrative_source": "chat", "odt": None,
             "attachments_root": None, "genesis_prompt": None, "parse_session_header": True,
-            "parent_cell_hash": None, "delta_type": None, "case_study_id": None, "seal_key_hex": None,
+            "parent_cell": None, "parent_seal_key_hex": None, "delta_type": None,
+            "case_study_id": None, "seal_key_hex": None,
+            "max_archive_members": amcs.DEFAULT_MAX_ARCHIVE_MEMBERS,
+            "max_expanded_bytes": amcs.DEFAULT_MAX_EXPANDED_BYTES,
         }
         values.update(overrides)
         return argparse.Namespace(**values)
@@ -72,6 +75,26 @@ class AMCSConformanceTests(unittest.TestCase):
             self._validate("cell_root.schema.json", json.loads((cell / "manifests/cell_root.json").read_text(encoding="utf-8")))
             ok, errors = amcs.verify_cell_dir(cell)
             self.assertTrue(ok, errors)
+
+            graph = json.loads((cell / "data/case_study_map.json").read_text(encoding="utf-8"))
+            message_nodes = [node for node in graph["nodes"] if node["node_id"].startswith("NMSG")]
+            self.assertTrue(message_nodes)
+            self.assertTrue(all(node["node_type"] == "evidence_item" for node in message_nodes))
+
+    def test_base_case_study_identity_depends_on_source_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = Path(amcs.seal(self._seal_args(root, self._chat(root, name="a.json"), cell_name="CELL_A")))
+            second_chat = self._chat(root, [
+                {"role": "user", "content": "different source"},
+                {"role": "assistant", "content": "different response"},
+            ], name="b.json")
+            second = Path(amcs.seal(self._seal_args(root, second_chat, cell_name="CELL_B")))
+            first_root = self._extract(first, root, "extract_a")
+            second_root = self._extract(second, root, "extract_b")
+            first_id = json.loads((first_root / "cell_index.json").read_text(encoding="utf-8"))["case_study_id"]
+            second_id = json.loads((second_root / "cell_index.json").read_text(encoding="utf-8"))["case_study_id"]
+            self.assertNotEqual(first_id, second_id)
 
     def test_sealed_cell_is_no_clobber(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -128,49 +151,82 @@ class AMCSConformanceTests(unittest.TestCase):
             errors = amcs._verify_graph_references(cell)
             self.assertTrue(any("unknown node" in error for error in errors))
 
-    def test_authenticated_root_requires_matching_key(self):
+    def test_authenticated_root_requires_matching_key_and_rejects_mode_downgrade(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); key_hex = "11" * 32
+            root = Path(tmp); key_hex = "11" * 32; key = bytes.fromhex(key_hex)
             archive = Path(amcs.seal(self._seal_args(root, self._chat(root), seal_key_hex=key_hex)))
             self.assertFalse(amcs.verify_archive(archive)[0])
-            self.assertTrue(amcs.verify_archive(archive, seal_key=bytes.fromhex(key_hex))[0])
+            self.assertTrue(amcs.verify_archive(archive, seal_key=key)[0])
             cell = self._extract(archive, root)
             receipt = json.loads((cell / "manifests/seal_receipt.json").read_text(encoding="utf-8"))
             receipt["scope"] = "tampered"
             (cell / "manifests/seal_receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
-            ok, errors = amcs.verify_cell_dir(cell, seal_key=bytes.fromhex(key_hex))
+            ok, errors = amcs.verify_cell_dir(cell, seal_key=key)
             self.assertFalse(ok)
             self.assertTrue(any("receipt binding" in error for error in errors))
 
-    def test_delta_requires_complete_lineage_and_stable_case_study_id(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); chat = self._chat(root)
-            with self.assertRaises(amcs.AMCSValidationError):
-                amcs.seal(self._seal_args(root, chat, parent_cell_hash="a" * 64))
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); chat = self._chat(root)
-            with self.assertRaises(amcs.AMCSValidationError):
-                amcs.seal(self._seal_args(root, chat, parent_cell_hash="a" * 64, delta_type="additive"))
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); chat = self._chat(root)
-            archive = Path(amcs.seal(self._seal_args(
-                root, chat, parent_cell_hash="a" * 64, delta_type="additive", case_study_id="CASE_1"
-            )))
+            root = Path(tmp); key_hex = "22" * 32; key = bytes.fromhex(key_hex)
+            archive = Path(amcs.seal(self._seal_args(root, self._chat(root), seal_key_hex=key_hex)))
             cell = self._extract(archive, root)
-            receipt = json.loads((cell / "manifests/seal_receipt.json").read_text(encoding="utf-8"))
-            index = json.loads((cell / "cell_index.json").read_text(encoding="utf-8"))
-            self.assertEqual(receipt["parent_cell_hash"], "a" * 64)
+            root_path = cell / "manifests/cell_root.json"
+            record = json.loads(root_path.read_text(encoding="utf-8"))
+            record["authentication_alg"] = "NONE"
+            record["root_mac"] = None
+            payload = {k: record[k] for k in (
+                "root_version", "cell_id", "case_study_id", "content_manifest_hash",
+                "seal_receipt_hash", "cell_index_hash", "parent_cell_hash", "delta_type", "authentication_alg"
+            )}
+            record["root_hash"] = amcs.canonical_hash(payload)
+            root_path.write_text(json.dumps(record), encoding="utf-8")
+            ok, errors = amcs.verify_cell_dir(cell, seal_key=key)
+            self.assertFalse(ok)
+            self.assertTrue(any("not authenticated" in error for error in errors))
+
+    def test_delta_lineage_is_derived_from_verified_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parent = Path(amcs.seal(self._seal_args(root, self._chat(root, name="parent.json"), cell_name="PARENT")))
+            parent_root = self._extract(parent, root, "parent_extract")
+            parent_case_id = json.loads((parent_root / "cell_index.json").read_text(encoding="utf-8"))["case_study_id"]
+
+            delta_chat = self._chat(root, [
+                {"role": "user", "content": "new evidence"},
+                {"role": "assistant", "content": "recorded"},
+            ], name="delta.json")
+            child = Path(amcs.seal(self._seal_args(
+                root, delta_chat, cell_name="DELTA", parent_cell=str(parent), delta_type="additive"
+            )))
+            child_root = self._extract(child, root, "child_extract")
+            receipt = json.loads((child_root / "manifests/seal_receipt.json").read_text(encoding="utf-8"))
+            index = json.loads((child_root / "cell_index.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt["parent_cell_hash"], amcs.sha256_file(parent))
             self.assertEqual(receipt["delta_type"], "additive")
-            self.assertEqual(receipt["case_study_id"], "CASE_1")
-            self.assertEqual(index["case_study_id"], "CASE_1")
+            self.assertEqual(receipt["case_study_id"], parent_case_id)
+            self.assertEqual(index["case_study_id"], parent_case_id)
+
+            with self.assertRaises(amcs.AMCSValidationError):
+                amcs.seal(self._seal_args(
+                    root, delta_chat, cell_name="DELTA_BAD_ID", parent_cell=str(parent),
+                    delta_type="additive", case_study_id="OTHER_CASE"
+                ))
+
+    def test_delta_requires_parent_and_rejects_unverified_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); chat = self._chat(root)
+            with self.assertRaises(amcs.AMCSValidationError):
+                amcs.seal(self._seal_args(root, chat, delta_type="additive"))
+            bogus = root / "bogus.tar.gz"; bogus.write_bytes(b"not a tar")
+            with self.assertRaises(amcs.AMCSValidationError):
+                amcs.seal(self._seal_args(root, chat, cell_name="DELTA", parent_cell=str(bogus), delta_type="additive"))
 
     def test_supercell_manifest_matches_schema_and_is_no_clobber(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); archive = Path(amcs.seal(self._seal_args(root, self._chat(root))))
             args = argparse.Namespace(
                 cells=[str(archive)], out_dir=str(root / "super"), supercell_name="SUPER_1", scope="test",
-                mode="research", reason="test", notes="", max_archive_members=10000,
-                max_expanded_bytes=512 * 1024 * 1024,
+                mode="research", reason="test", notes="", seal_key_hex=None,
+                max_archive_members=10000, max_expanded_bytes=512 * 1024 * 1024,
             )
             supercell = Path(amcs.assemble_supercell(args))
             extracted = root / "super_extract"; amcs.safe_extract_tar(supercell, extracted)
@@ -178,6 +234,17 @@ class AMCSConformanceTests(unittest.TestCase):
             manifest = json.loads((superroot / "supercell_manifest.json").read_text(encoding="utf-8"))
             self._validate("supercell_manifest.schema.json", manifest)
             with self.assertRaises(amcs.AMCSSecurityError): amcs.assemble_supercell(args)
+
+    def test_supercell_can_verify_authenticated_children_with_explicit_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); key_hex = "33" * 32
+            archive = Path(amcs.seal(self._seal_args(root, self._chat(root), seal_key_hex=key_hex)))
+            args = argparse.Namespace(
+                cells=[str(archive)], out_dir=str(root / "super"), supercell_name="SUPER_AUTH", scope="test",
+                mode="research", reason="test", notes="", seal_key_hex=key_hex,
+                max_archive_members=10000, max_expanded_bytes=512 * 1024 * 1024,
+            )
+            self.assertTrue(Path(amcs.assemble_supercell(args)).is_file())
 
 
 if __name__ == "__main__":
