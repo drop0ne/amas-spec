@@ -52,6 +52,17 @@ jobs:
           tmp="$(mktemp -d)"
           python reference/amcs_runtime.py seal --input examples/chat_minimal.json --out-dir "$tmp" --cell-name CI_CELL
           python reference/amcs_runtime.py verify --cell "$tmp/CI_CELL.tar.gz"
+      - name: Reject schema-invalid AMCS input before sealing
+        run: |
+          tmp="$(mktemp -d)"
+          cat > "$tmp/bad.json" <<'JSON'
+          [{"role":"user","content":"test","timestamp":123,"no_response_required":true}]
+          JSON
+          if python reference/amcs_runtime.py seal --input "$tmp/bad.json" --out-dir "$tmp" --cell-name BAD_CELL; then
+            echo "invalid input unexpectedly sealed"
+            exit 1
+          fi
+          test ! -e "$tmp/BAD_CELL.tar.gz"
       - name: Exercise schema-validating AMCS authenticated-root round trip
         run: |
           tmp="$(mktemp -d)"
