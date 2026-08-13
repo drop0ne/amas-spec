@@ -30,8 +30,7 @@
     "source_message_hashes": {
       "type": "array",
       "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-      "minItems": 1,
-      "uniqueItems": true
+      "minItems": 1
     },
     "metrics": {
       "type": "object",
