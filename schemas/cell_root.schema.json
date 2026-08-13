@@ -11,11 +11,15 @@
     "content_manifest_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "seal_receipt_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "cell_index_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "parent_cell_hash": {"type": ["string", "null"]},
+    "parent_cell_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
     "delta_type": {"type": ["string", "null"], "enum": ["additive", "corrective", "contextual", null]},
     "root_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "authentication_alg": {"enum": ["NONE", "HMAC-SHA256"]},
-    "root_mac": {"type": ["string", "null"]}
+    "root_mac": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
   },
+  "allOf": [
+    {"if": {"properties": {"authentication_alg": {"const": "NONE"}}, "required": ["authentication_alg"]}, "then": {"properties": {"root_mac": {"type": "null"}}}},
+    {"if": {"properties": {"authentication_alg": {"const": "HMAC-SHA256"}}, "required": ["authentication_alg"]}, "then": {"properties": {"root_mac": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}}
+  ],
   "additionalProperties": false
 }
