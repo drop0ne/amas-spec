@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from canonical_json import CanonicalJSONError, sha256 as canonical_sha256, validate as validate_canonical
+from canonical_json import CanonicalJSONError, MAX_SAFE_INTEGER, sha256 as canonical_sha256, validate as validate_canonical
 
 SIDE_EFFECT = {
     "observe": 0,
@@ -23,18 +23,22 @@ SIDE_EFFECT = {
     "privileged_change": 4,
 }
 
+_POLICY_REQUIRED = {"policy_id", "principal", "objectives", "operations", "targets", "max_side_effect", "budgets", "expires_at"}
+_POLICY_ALLOWED = _POLICY_REQUIRED | {
+    "destinations", "credentials", "capability_contracts", "max_delegation_depth",
+    "operator_escalation", "parent_policy_id", "parent_policy_hash",
+}
+_REQUEST_REQUIRED = {"request_id", "principal", "objective_id", "operation", "target", "side_effect", "usage", "timestamp"}
+_REQUEST_ALLOWED = _REQUEST_REQUIRED | {"destination", "credential_ref", "capability_contract_id", "delegation_depth"}
+_USAGE_KEYS = {"actions", "network_calls", "egress_bytes", "wall_clock_seconds"}
+_BUDGET_KEYS = {"max_actions", "max_network_calls", "max_egress_bytes", "max_wall_clock_seconds"}
+
 
 def canonical_hash(obj: Any) -> str:
     return canonical_sha256(obj)
 
 
 def safe_diagnostic_hash(obj: Any) -> str:
-    """Always return a SHA-256 diagnostic identity, even for rejected objects.
-
-    Valid Canonical JSON v1 values use their normative canonical identity.
-    Invalid values are hashed only as a local diagnostic representation and
-    MUST NOT be treated as a normative cross-runtime object identity.
-    """
     try:
         return canonical_hash(obj)
     except (CanonicalJSONError, TypeError, ValueError, RecursionError):
@@ -51,6 +55,69 @@ def parse_time(value: str) -> datetime:
     if dt.tzinfo is None:
         raise ValueError("timestamps must include timezone")
     return dt.astimezone(timezone.utc)
+
+
+def _require_shape(obj: dict[str, Any], required: set[str], allowed: set[str], name: str) -> None:
+    missing = sorted(required - set(obj))
+    if missing:
+        raise KeyError(f"missing {name} field:{missing[0]}")
+    extra = sorted(set(obj) - allowed)
+    if extra:
+        raise ValueError(f"unknown {name} field:{extra[0]}")
+
+
+def _string_array(value: Any, name: str) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"{name} must contain non-empty strings")
+    if len(value) != len(set(value)):
+        raise ValueError(f"{name} contains duplicates")
+    return value
+
+
+def _validate_policy_shape(policy: dict[str, Any]) -> None:
+    _require_shape(policy, _POLICY_REQUIRED, _POLICY_ALLOWED, "policy")
+    for field in ("policy_id", "principal", "expires_at"):
+        if not isinstance(policy[field], str) or not policy[field]:
+            raise ValueError(f"invalid policy field:{field}")
+    for field in ("objectives", "operations", "targets", "destinations", "credentials", "capability_contracts"):
+        _string_array(policy.get(field, []), field)
+    if policy["max_side_effect"] not in SIDE_EFFECT:
+        raise KeyError("unknown max_side_effect")
+    budgets = policy["budgets"]
+    if not isinstance(budgets, dict) or set(budgets) != _BUDGET_KEYS:
+        raise ValueError("budgets must contain exactly the four budget fields")
+    for field, value in budgets.items():
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > MAX_SAFE_INTEGER:
+            raise ValueError(f"invalid budget:{field}")
+    depth = policy.get("max_delegation_depth", 0)
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0 or depth > MAX_SAFE_INTEGER:
+        raise ValueError("invalid max_delegation_depth")
+    if "operator_escalation" in policy and not isinstance(policy["operator_escalation"], bool):
+        raise ValueError("operator_escalation must be boolean")
+    parse_time(policy["expires_at"])
+
+
+def _validate_request_shape(request: dict[str, Any]) -> None:
+    _require_shape(request, _REQUEST_REQUIRED, _REQUEST_ALLOWED, "request")
+    for field in ("request_id", "principal", "objective_id", "operation", "target", "timestamp"):
+        if not isinstance(request[field], str) or not request[field]:
+            raise ValueError(f"invalid request field:{field}")
+    if request["side_effect"] not in SIDE_EFFECT:
+        raise KeyError("unknown side_effect")
+    for field in ("destination", "credential_ref", "capability_contract_id"):
+        value = request.get(field)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError(f"invalid request field:{field}")
+    usage = request["usage"]
+    if not isinstance(usage, dict) or set(usage) != _USAGE_KEYS:
+        raise ValueError("usage must contain exactly the four usage fields")
+    for field, value in usage.items():
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > MAX_SAFE_INTEGER:
+            raise ValueError(f"invalid usage:{field}")
+    depth = request.get("delegation_depth", 0)
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0 or depth > MAX_SAFE_INTEGER:
+        raise ValueError("invalid delegation_depth")
+    parse_time(request["timestamp"])
 
 
 def _outcome(policy: dict[str, Any], hard: bool) -> str:
@@ -71,11 +138,10 @@ def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | No
     try:
         if not isinstance(policy, dict) or not isinstance(request, dict):
             raise TypeError("policy and request must be objects")
-        # Reject NaN/floats, non-string keys, unsafe integers, surrogate strings,
-        # and other values outside the repository security encoding before any
-        # authorization rule is evaluated.
         validate_canonical(policy)
         validate_canonical(request)
+        _validate_policy_shape(policy)
+        _validate_request_shape(request)
 
         expires = parse_time(policy["expires_at"])
         checks.append(("policy_freshness", now <= expires, True))
@@ -97,16 +163,9 @@ def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | No
         else:
             checks.append(("capability_contract_scope", contract_id is None, True))
 
-        req_effect = SIDE_EFFECT[request["side_effect"]]
-        max_effect = SIDE_EFFECT[policy["max_side_effect"]]
-        checks.append(("side_effect_ceiling", req_effect <= max_effect, True))
-
+        checks.append(("side_effect_ceiling", SIDE_EFFECT[request["side_effect"]] <= SIDE_EFFECT[policy["max_side_effect"]], True))
         budgets = policy["budgets"]
         usage = request["usage"]
-        for field in ("actions", "network_calls", "egress_bytes", "wall_clock_seconds"):
-            value = usage[field]
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise ValueError(f"invalid usage:{field}")
         checks.append(("action_budget", usage["actions"] <= budgets["max_actions"], True))
         checks.append(("network_budget", usage["network_calls"] <= budgets["max_network_calls"], True))
         checks.append(("egress_budget", usage["egress_bytes"] <= budgets["max_egress_bytes"], True))
