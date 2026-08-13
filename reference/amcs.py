@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""AMCS Runtime (Reference Implementation) — v0.2.0.
+"""AMCS reference runtime — v0.3.0.
 
-Security-hardened AMCS v1.2.1 INTERNAL-profile runtime.
-
-Properties added in v0.2.0:
-- bounded, traversal-safe tar extraction with no links/special files
-- strict cell/supercell identifier validation and output-root containment
-- attachment-root containment
-- fail-closed sealing: verification failure emits no cell bundle
-- archive member/expanded-size limits
-- child-cell verification before supercell assembly
+Implements the AMCS v1.2.1 INTERNAL profile with security hardening:
+- full chat crawl and explicit prompt/response omission accounting
+- required matrices, case files, case-study graph CSV/JSON, cell index, schemas,
+  manifests, verification log, and README surfaces
+- path-safe evidence collection and bounded traversal-safe archive extraction
+- immutable no-clobber cell/supercell creation
+- fail-closed pre-seal and archive verification
+- content manifest + seal receipt + index cryptographically bound by a cell root
+- optional HMAC-authenticated cell root for reference testing/deployment binding
+- delta lineage fields and child-cell verification before supercell assembly
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import argparse
 import csv
 import datetime
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -26,7 +28,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 AMCS_INIT_SEED_DEFAULT = (
     "Promote to a case study, so I want you to do is to quantify the data into an indexable "
@@ -37,6 +39,17 @@ IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SESSION_HEADER_RE = re.compile(r"^\[AMCS_SESSION_HEADER\s+v(?P<ver>[0-9.]+)\]\s*$", re.IGNORECASE)
 DEFAULT_MAX_ARCHIVE_MEMBERS = 10_000
 DEFAULT_MAX_EXPANDED_BYTES = 512 * 1024 * 1024
+GENESIS_HASH = "0" * 64
+
+AMCS_SCHEMA_NAMES = (
+    "case_study_map.schema.json",
+    "cell_index.schema.json",
+    "prompt_log.schema.json",
+    "prompt_response_map.schema.json",
+    "seal_receipt.schema.json",
+    "cell_root.schema.json",
+    "supercell_manifest.schema.json",
+)
 
 HEADER_KEY_ALIASES = {
     "domain": "domain", "primary_question": "primary_question", "primaryquestion": "primary_question",
@@ -63,9 +76,21 @@ class AMCSValidationError(AMCSError):
     pass
 
 
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _norm_text(value: str) -> str:
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     return "\n".join(line.rstrip() for line in value.split("\n"))
+
+
+def _canonical_bytes(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def canonical_hash(value: Any) -> str:
+    return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 
 
 def sha256_text(value: str) -> str:
@@ -117,12 +142,17 @@ def _split_list(value: str) -> List[str]:
     return parts
 
 
+def _write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def load_chat(path: str | Path) -> List[Dict[str, Any]]:
     source = Path(path)
     if source.suffix.lower() == ".json":
         data = json.loads(source.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
-            raise ValueError("JSON input must be a list of message objects")
+        if not isinstance(data, list) or not data:
+            raise ValueError("JSON input must be a non-empty list of message objects")
         messages: List[Dict[str, Any]] = []
         for index, item in enumerate(data):
             if not isinstance(item, dict):
@@ -135,11 +165,24 @@ def load_chat(path: str | Path) -> List[Dict[str, Any]]:
                 raise ValueError(f"Message {index} content must be a string")
             if not isinstance(attachments, list) or any(not isinstance(a, str) for a in attachments):
                 raise ValueError(f"Message {index} attachments must be an array of strings")
-            messages.append({"role": role, "content": content, "timestamp": item.get("timestamp"), "attachments": attachments})
+            no_response = item.get("no_response_required", False)
+            if not isinstance(no_response, bool):
+                raise ValueError(f"Message {index} no_response_required must be boolean")
+            if role == "assistant" and no_response:
+                raise ValueError("no_response_required is valid only for user messages")
+            messages.append({
+                "role": role,
+                "content": content,
+                "timestamp": item.get("timestamp"),
+                "attachments": attachments,
+                "no_response_required": no_response,
+            })
         return messages
 
     raw = source.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     blocks = [block.strip("\n") for block in re.split(r"\n\s*\n", raw) if block.strip()]
+    if not blocks:
+        raise ValueError("TXT input is empty")
     messages = []
     for block in blocks:
         if block.startswith("USER:"):
@@ -148,7 +191,7 @@ def load_chat(path: str | Path) -> List[Dict[str, Any]]:
             role, content = "assistant", block[len("ASSISTANT:"):].lstrip()
         else:
             raise ValueError("TXT blocks must start with USER: or ASSISTANT:")
-        messages.append({"role": role, "content": content, "timestamp": None, "attachments": []})
+        messages.append({"role": role, "content": content, "timestamp": None, "attachments": [], "no_response_required": False})
     return messages
 
 
@@ -192,20 +235,22 @@ def extract_session_header(messages: List[Dict[str, Any]]) -> Optional[Dict[str,
         key, value = line.split(":", 1)
         key_norm = HEADER_KEY_ALIASES.get(_norm_key(key), _norm_key(key))
         value = value.strip()
-        if key_norm == "sensitivity" and "exclusions:" in value.lower():
-            left, right = re.split(r"(?i)exclusions:\s*", value, maxsplit=1)
-            parsed["sensitivity"], parsed["exclusions"] = left.strip(), right.strip()
-            continue
         parsed[key_norm] = _split_list(value) if key_norm == "assumptions" else value
         if key_norm not in HEADER_FIELD_ORDER:
             unknown[key_norm] = value
     normalized = {key: parsed.get(key, [] if key == "assumptions" else "") for key in HEADER_FIELD_ORDER}
     return {
-        "schema_version": f"session_header.v{version}", "header_version": version,
-        "raw_text": "\n".join(header_lines).strip() + "\n", "fields": normalized,
+        "schema_version": f"session_header.v{version}",
+        "header_version": version,
+        "raw_text": "\n".join(header_lines).strip() + "\n",
+        "fields": normalized,
         "unknown_fields": unknown,
-        "source": {"chat_index": messages[0].get("chat_index"), "prompt_id": messages[0].get("prompt_id"),
-                   "response_id": messages[0].get("response_id"), "message_hash": sha256_text(first)},
+        "source": {
+            "chat_index": messages[0].get("chat_index"),
+            "prompt_id": messages[0].get("prompt_id"),
+            "response_id": messages[0].get("response_id"),
+            "message_hash": sha256_text(first),
+        },
     }
 
 
@@ -213,30 +258,51 @@ def build_prompt_log(messages: List[Dict[str, Any]], scope_tag: str) -> List[Dic
     result = []
     for message in messages:
         text = _norm_text(message["content"])
-        result.append({"prompt_id": message["prompt_id"], "role": message["role"], "timestamp": message.get("timestamp"),
-                       "chat_index": message["chat_index"], "message_text": text, "message_hash": sha256_text(text),
-                       "scope_tag": scope_tag})
+        result.append({
+            "prompt_id": message["prompt_id"],
+            "role": message["role"],
+            "timestamp": message.get("timestamp"),
+            "chat_index": message["chat_index"],
+            "message_text": text,
+            "message_hash": sha256_text(text),
+            "scope_tag": scope_tag,
+        })
     return result
 
 
 def build_prompt_response_map(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-    mappings = []
-    last_user: Optional[str] = None
+    mappings: List[Dict[str, Any]] = []
+    pending_users: List[str] = []
+    no_response_required: List[str] = []
     for message in messages:
         if message["role"] == "user":
-            last_user = message["prompt_id"]
+            if message.get("no_response_required"):
+                no_response_required.append(message["prompt_id"])
+            else:
+                pending_users.append(message["prompt_id"])
             continue
-        responds_to = [last_user] if last_user else ([messages[0]["prompt_id"]] if messages else [])
-        if responds_to:
-            mappings.append({"response_id": message["response_id"], "responds_to_prompt_ids": responds_to,
-                             "response_text_hash": sha256_text(message["content"]),
-                             "response_scope_note": "nearest prior user prompt" if last_user else "no prior user prompt; anchored to first prompt"})
-    return {"mappings": mappings}
+        responds_to = list(pending_users)
+        if not responds_to:
+            # Assistant output without a pending user turn is still retained but
+            # cannot invent a user causal anchor.
+            continue
+        mappings.append({
+            "response_id": message["response_id"],
+            "responds_to_prompt_ids": responds_to,
+            "response_text_hash": sha256_text(message["content"]),
+            "response_scope_note": "all pending user prompts since prior assistant response",
+        })
+        pending_users.clear()
+    return {
+        "mappings": mappings,
+        "no_response_required_prompt_ids": no_response_required,
+        "unanswered_prompt_ids": pending_users,
+    }
 
 
 def _copy_explicit_file(source: str | Path, evidence_dir: Path) -> Path:
     source_path = Path(source).resolve(strict=True)
-    if not source_path.is_file():
+    if not source_path.is_file() or source_path.is_symlink():
         raise AMCSSecurityError(f"evidence source is not a regular file: {source_path}")
     destination = evidence_dir / source_path.name
     stem, suffix, counter = destination.stem, destination.suffix, 1
@@ -265,98 +331,85 @@ def copy_evidence(odt_path: Optional[str], messages: List[Dict[str, Any]], attac
             if path.is_absolute():
                 raise AMCSSecurityError("message attachment paths must be relative to --attachments-root")
             source = _resolved_child(root, root / path)
-            if not source.is_file():
+            if not source.is_file() or source.is_symlink():
                 raise AMCSSecurityError(f"attachment missing or not a regular file: {attachment}")
             copied.append(str(_copy_explicit_file(source, evidence)))
     return copied
 
 
-def _write_json(path: Path, obj: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
 def build_messages_matrix(messages: List[Dict[str, Any]], out_dir: str | Path) -> Tuple[str, str]:
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
+    out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
     csv_path, jsonl_path = out / "messages.csv", out / "messages.jsonl"
     fields = ["matrix_row_id", "row_type", "role", "chat_index", "prompt_id", "response_id", "timestamp",
               "observation_text", "message_hash", "source_prompt_ids", "source_response_ids", "source_message_hashes"]
+    rows = []
+    for index, message in enumerate(messages, start=1):
+        text, digest = _norm_text(message["content"]), sha256_text(message["content"])
+        rows.append({
+            "matrix_row_id": f"MMSG{index:06d}", "row_type": "message", "role": message["role"],
+            "chat_index": message["chat_index"], "prompt_id": message["prompt_id"], "response_id": message["response_id"],
+            "timestamp": message.get("timestamp"), "observation_text": text, "message_hash": digest,
+            "source_prompt_ids": [message["prompt_id"]],
+            "source_response_ids": [message["response_id"]] if message["response_id"] else [],
+            "source_message_hashes": [digest],
+        })
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for index, message in enumerate(messages, start=1):
-            text, digest = _norm_text(message["content"]), sha256_text(message["content"])
-            writer.writerow({"matrix_row_id": f"MMSG{index:06d}", "row_type": "message", "role": message["role"],
-                             "chat_index": message["chat_index"], "prompt_id": message["prompt_id"],
-                             "response_id": message["response_id"] or "", "timestamp": message.get("timestamp") or "",
-                             "observation_text": text, "message_hash": digest, "source_prompt_ids": message["prompt_id"],
-                             "source_response_ids": message["response_id"] or "", "source_message_hashes": digest})
+        writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader()
+        for row in rows:
+            flat = dict(row)
+            for key in ("source_prompt_ids", "source_response_ids", "source_message_hashes"):
+                flat[key] = ";".join(row[key])
+            flat["response_id"] = flat["response_id"] or ""; flat["timestamp"] = flat["timestamp"] or ""
+            writer.writerow(flat)
     with jsonl_path.open("w", encoding="utf-8") as handle:
-        for index, message in enumerate(messages, start=1):
-            text, digest = _norm_text(message["content"]), sha256_text(message["content"])
-            obj = {"matrix_row_id": f"MMSG{index:06d}", "row_type": "message", "role": message["role"],
-                   "chat_index": message["chat_index"], "prompt_id": message["prompt_id"], "response_id": message["response_id"],
-                   "timestamp": message.get("timestamp"), "observation_text": text, "message_hash": digest,
-                   "source_prompt_ids": [message["prompt_id"]], "source_response_ids": [message["response_id"]] if message["response_id"] else [],
-                   "source_message_hashes": [digest]}
-            handle.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        for row in rows: handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     return str(csv_path), str(jsonl_path)
 
 
-def build_session_header_artifacts(cell_dir: str | Path, header: Dict[str, Any]) -> Dict[str, str]:
-    cell = Path(cell_dir)
+def build_session_header_artifacts(cell: Path, header: Dict[str, Any]) -> None:
     data, matrices, casefiles = cell / "data", cell / "data" / "matrices", cell / "casefiles"
     matrices.mkdir(parents=True, exist_ok=True); casefiles.mkdir(parents=True, exist_ok=True)
-    obj = {"schema_version": header.get("schema_version"), "header_version": header.get("header_version"),
-           "raw_text": header.get("raw_text"), "fields": header.get("fields", {}), "unknown_fields": header.get("unknown_fields", {}),
-           "source": header.get("source", {}), "parser": {"name": "amcs_runtime", "version": __version__}}
-    json_path = data / "session_header.json"; _write_json(json_path, obj)
-    fields = obj["fields"]
-    row = {"matrix_row_id": "MSH000001", "row_type": "session_header", "header_version": obj.get("header_version") or "",
-           "domain": fields.get("domain", ""), "primary_question": fields.get("primary_question", ""), "scope": fields.get("scope", ""),
-           "assumptions": "; ".join(fields.get("assumptions", []) or []), "constraints": fields.get("constraints", ""),
-           "desired_output": fields.get("desired_output", ""), "stop_condition": fields.get("stop_condition", ""),
-           "follow_ups": fields.get("follow_ups", ""), "sensitivity": fields.get("sensitivity", ""), "exclusions": fields.get("exclusions", ""),
-           "source_prompt_ids": obj.get("source", {}).get("prompt_id", ""), "source_response_ids": obj.get("source", {}).get("response_id", ""),
-           "source_message_hashes": obj.get("source", {}).get("message_hash", "")}
-    csv_path = matrices / "session_header.csv"
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+    _write_json(data / "session_header.json", header)
+    source = header.get("source", {}); fields = header.get("fields", {})
+    row = {
+        "matrix_row_id": "MSH000001", "row_type": "session_header", "header_version": header.get("header_version") or "",
+        "domain": fields.get("domain", ""), "primary_question": fields.get("primary_question", ""), "scope": fields.get("scope", ""),
+        "assumptions": "; ".join(fields.get("assumptions", []) or []), "constraints": fields.get("constraints", ""),
+        "desired_output": fields.get("desired_output", ""), "stop_condition": fields.get("stop_condition", ""),
+        "follow_ups": fields.get("follow_ups", ""), "sensitivity": fields.get("sensitivity", ""), "exclusions": fields.get("exclusions", ""),
+        "source_prompt_ids": source.get("prompt_id", ""), "source_response_ids": source.get("response_id", ""),
+        "source_message_hashes": source.get("message_hash", ""),
+    }
+    with (matrices / "session_header.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(row)); writer.writeheader(); writer.writerow(row)
-    jsonl_path = matrices / "session_header.jsonl"
     jrow = dict(row)
     for key in ("source_prompt_ids", "source_response_ids", "source_message_hashes"):
         jrow[key] = [row[key]] if row[key] else []
-    jsonl_path.write_text(json.dumps(jrow, ensure_ascii=False) + "\n", encoding="utf-8")
-    casefile = casefiles / "CF_SESSION_HEADER.md"; source = obj.get("source", {})
-    lines = ["# Case File: Session Header (CF_SESSION_HEADER)", "", "## What this is",
-             "A structured FIRST-ORDER capture of the optional session header block.", "", "## Provenance",
-             f"- prompt_id: {source.get('prompt_id', '')}", f"- response_id: {source.get('response_id', '')}",
-             f"- message_hash: {source.get('message_hash', '')}", "", "## Header (verbatim)", "```",
-             (obj.get("raw_text") or "").rstrip("\n"), "```", "", "## Parsed fields"]
-    for key in HEADER_FIELD_ORDER:
-        value = fields.get(key, ""); value = "; ".join(value or []) if key == "assumptions" else value
-        lines.append(f"- {key}: {value}")
-    casefile.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    return {"session_header_json": str(json_path.relative_to(cell)), "session_header_csv": str(csv_path.relative_to(cell)),
-            "session_header_jsonl": str(jsonl_path.relative_to(cell)), "session_header_casefile": str(casefile.relative_to(cell))}
+    (matrices / "session_header.jsonl").write_text(json.dumps(jrow, ensure_ascii=False) + "\n", encoding="utf-8")
+    lines = ["# Case File: Session Header", "", "## What this is", "FIRST-ORDER capture of the optional session header.", "", "## Provenance",
+             f"- prompt_id: {source.get('prompt_id', '')}", f"- message_hash: {source.get('message_hash', '')}", "", "## Header (verbatim)", "```",
+             (header.get("raw_text") or "").rstrip("\n"), "```"]
+    (casefiles / "CF_SESSION_HEADER.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def build_case_files(cell_dir: str | Path, messages: List[Dict[str, Any]], scope: str, primary_source: str) -> str:
-    cell = Path(cell_dir); path = cell / "casefiles" / "CF_MESSAGES.md"; path.parent.mkdir(parents=True, exist_ok=True)
-    first, last = (messages[0]["prompt_id"] if messages else ""), (messages[-1]["prompt_id"] if messages else "")
-    path.write_text(f"# Case File: Messages Matrix (CF_MESSAGES)\nScope: {scope}\nPrimary narrative source: {primary_source}\n\n"
-                    f"## What this case file is\nCanonical narrative anchor for the FIRST-ORDER messages matrix.\n\n"
-                    f"## Provenance\n- prompt_id range: {first} → {last}\n- total messages: {len(messages)}\n",
-                    encoding="utf-8")
-    return str(path)
+def build_case_files(cell: Path, messages: List[Dict[str, Any]], scope: str, primary_source: str) -> None:
+    path = cell / "casefiles" / "CF_MESSAGES.md"; path.parent.mkdir(parents=True, exist_ok=True)
+    first, last = messages[0]["prompt_id"], messages[-1]["prompt_id"]
+    path.write_text(
+        f"# Case File: Messages Matrix\n\nScope: {scope}\nPrimary narrative source: {primary_source}\n\n"
+        "## What this is\nCanonical narrative anchor for the FIRST-ORDER messages matrix.\n\n"
+        f"## Provenance\n- prompt_id range: {first} → {last}\n- total messages: {len(messages)}\n\n"
+        "## Known gaps / TODOs\n- This reference runtime does not infer entities/topics/claims during sealing.\n",
+        encoding="utf-8",
+    )
 
 
-def build_case_study_map(cell_dir: str | Path, messages: List[Dict[str, Any]], session_header: Optional[Dict[str, Any]] = None) -> str:
-    cell = Path(cell_dir); nodes: List[Dict[str, Any]] = []; edges: List[Dict[str, Any]] = []
+def build_case_study_outputs(cell: Path, messages: List[Dict[str, Any]], header: Optional[Dict[str, Any]]) -> None:
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
     nodes.append({"node_id": "NCF000001", "node_type": "case_file", "label": "CF_MESSAGES",
-                  "source_prompt_ids": [messages[0]["prompt_id"]] if messages else [], "source_response_ids": [],
-                  "source_message_hashes": [sha256_text(messages[0]["content"])] if messages else []})
+                  "source_prompt_ids": [messages[0]["prompt_id"]], "source_response_ids": [],
+                  "source_message_hashes": [sha256_text(messages[0]["content"])]})
     last_user = None; edge_counter = 0
     for index, message in enumerate(messages, start=1):
         node_id, digest = f"NMSG{index:06d}", sha256_text(message["content"])
@@ -372,32 +425,85 @@ def build_case_study_map(cell_dir: str | Path, messages: List[Dict[str, Any]], s
             edge_counter += 1
             edges.append({"edge_id": f"E{edge_counter:06d}", "from_node_id": node_id, "to_node_id": last_user,
                           "edge_type": "responds_to", "edge_epistemic_class": "relational", "source_prompt_ids": [message["prompt_id"]],
-                          "source_response_ids": [message["response_id"]] if message["response_id"] else [], "source_message_hashes": [digest]})
-    if session_header and messages:
-        source = session_header.get("source", {})
+                          "source_response_ids": [message["response_id"]], "source_message_hashes": [digest]})
+    if header:
+        source = header.get("source", {})
         nodes.append({"node_id": "NCF000002", "node_type": "case_file", "label": "CF_SESSION_HEADER",
-                      "source_prompt_ids": [source.get("prompt_id")] if source.get("prompt_id") else [],
-                      "source_response_ids": [source.get("response_id")] if source.get("response_id") else [],
-                      "source_message_hashes": [source.get("message_hash")] if source.get("message_hash") else []})
-        edge_counter += 1
-        edges.append({"edge_id": f"E{edge_counter:06d}", "from_node_id": "NCF000002", "to_node_id": "NMSG000001",
-                      "edge_type": "references", "edge_epistemic_class": "relational", "source_prompt_ids": [source.get("prompt_id")] if source.get("prompt_id") else [],
-                      "source_response_ids": [source.get("response_id")] if source.get("response_id") else [],
-                      "source_message_hashes": [source.get("message_hash")] if source.get("message_hash") else []})
-    path = cell / "data" / "case_study_map.json"; _write_json(path, {"nodes": nodes, "edges": edges}); return str(path)
+                      "source_prompt_ids": [source["prompt_id"]] if source.get("prompt_id") else [], "source_response_ids": [],
+                      "source_message_hashes": [source["message_hash"]] if source.get("message_hash") else []})
+    _write_json(cell / "data" / "case_study_map.json", {"nodes": nodes, "edges": edges})
+
+    node_fields = ["node_id", "node_type", "label", "source_prompt_ids", "source_response_ids", "source_message_hashes"]
+    with (cell / "data" / "case_study_nodes.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=node_fields); writer.writeheader()
+        for node in nodes:
+            row = dict(node)
+            for key in node_fields[3:]: row[key] = ";".join(row.get(key, []))
+            writer.writerow(row)
+    edge_fields = ["edge_id", "from_node_id", "to_node_id", "edge_type", "edge_epistemic_class", "source_prompt_ids", "source_response_ids", "source_message_hashes"]
+    with (cell / "data" / "case_study_edges.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=edge_fields); writer.writeheader()
+        for edge in edges:
+            row = dict(edge)
+            for key in edge_fields[5:]: row[key] = ";".join(row.get(key, []))
+            writer.writerow(row)
 
 
-def write_cell_readme(cell_dir: str | Path, scope: str, has_session_header: bool) -> str:
-    cell = Path(cell_dir); path = cell / "README.md"
-    order = ["- `casefiles/CF_MESSAGES.md`", "- `data/prompt_log.json`", "- `data/matrices/messages.csv`", "- `data/case_study_map.json`"]
-    if has_session_header: order.insert(0, "- `casefiles/CF_SESSION_HEADER.md`")
-    path.write_text("# AMCS Memory Cell (INTERNAL)\n\n## Read order\n" + "\n".join(order) +
-                    "\n\n## Authority rules\n- Narrative is canonical for meaning.\n- Matrices are FIRST-ORDER only.\n"
-                    "- Graph edges are traversal aids and do not assert new facts.\n\nScope: " + scope + "\n", encoding="utf-8")
-    return str(path)
+def write_cell_readme(cell: Path, scope: str, has_header: bool) -> None:
+    order = ["- `casefiles/CF_MESSAGES.md`", "- `data/prompt_log.json`", "- `data/matrices/messages.csv`", "- `data/case_study_map.json`", "- `cell_index.json`"]
+    if has_header: order.insert(0, "- `casefiles/CF_SESSION_HEADER.md`")
+    text = (
+        "# AMCS Memory Cell (INTERNAL)\n\n## Read order\n" + "\n".join(order) +
+        "\n\n## Authority rules\n- Narrative is canonical for meaning.\n- Matrices are FIRST-ORDER only.\n"
+        "- Graph relationships are traversal aids and cannot override narrative.\n- Derived indexes do not define truth.\n\n"
+        "## What this is NOT\n- Not a model instruction channel.\n- Not proof that every derived interpretation is true.\n"
+        "- Not authorization for external side effects.\n- Not a public/redacted export profile.\n\nScope: " + scope + "\n"
+    )
+    (cell / "README.md").write_text(text, encoding="utf-8")
 
 
-_MANIFEST_EXCLUDES = {"manifests/file_hashes.sha256", "manifests/seal_receipt.json"}
+def copy_reference_schemas(cell: Path) -> None:
+    source_root = Path(__file__).resolve().parents[1] / "schemas"
+    destination = cell / "schemas"; destination.mkdir(parents=True, exist_ok=True)
+    for name in AMCS_SCHEMA_NAMES:
+        source = source_root / name
+        if not source.is_file():
+            raise AMCSValidationError(f"required reference schema missing: {name}")
+        shutil.copy2(source, destination / name)
+
+
+def _preseal_errors(cell: Path, prompt_map: Dict[str, Any], header: Optional[Dict[str, Any]]) -> List[str]:
+    errors: List[str] = []
+    required = [
+        "data/prompt_log.json", "data/prompt_response_map.json", "data/matrices/messages.csv", "data/matrices/messages.jsonl",
+        "data/case_study_map.json", "data/case_study_nodes.csv", "data/case_study_edges.csv", "casefiles/CF_MESSAGES.md",
+        "README.md", "schemas/case_study_map.schema.json", "schemas/cell_index.schema.json", "schemas/seal_receipt.schema.json",
+    ]
+    for rel in required:
+        if not (cell / rel).is_file(): errors.append(f"missing required artifact: {rel}")
+    if header:
+        for rel in ("data/session_header.json", "data/matrices/session_header.csv", "data/matrices/session_header.jsonl", "casefiles/CF_SESSION_HEADER.md"):
+            if not (cell / rel).is_file(): errors.append(f"missing session header artifact: {rel}")
+    if prompt_map.get("unanswered_prompt_ids"):
+        errors.append("unanswered user prompts without no_response_required: " + ",".join(prompt_map["unanswered_prompt_ids"]))
+    return errors
+
+
+def write_verification_log(cell: Path, errors: List[str]) -> None:
+    logs = cell / "logs"; logs.mkdir(parents=True, exist_ok=True)
+    lines = [f"AMCS runtime {__version__}", f"timestamp={_now()}", "phase=preseal", f"result={'PASS' if not errors else 'FAIL'}"]
+    lines.extend(f"error={error}" for error in errors)
+    (logs / "verification.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# These metadata surfaces are bound by cell_root rather than included in the
+# content manifest, avoiding circular hashes while preserving reviewable binding.
+_MANIFEST_EXCLUDES = {
+    "manifests/file_hashes.sha256",
+    "manifests/seal_receipt.json",
+    "manifests/cell_root.json",
+    "cell_index.json",
+}
 
 
 def _iter_regular_files(root: Path) -> Iterable[Path]:
@@ -406,29 +512,116 @@ def _iter_regular_files(root: Path) -> Iterable[Path]:
         if path.is_file(): yield path
 
 
-def build_file_hashes_manifest(cell_dir: str | Path) -> str:
-    cell = Path(cell_dir); manifest = cell / "manifests" / "file_hashes.sha256"; manifest.parent.mkdir(parents=True, exist_ok=True)
+def build_file_hashes_manifest(cell: Path) -> Path:
+    manifest = cell / "manifests" / "file_hashes.sha256"; manifest.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for path in _iter_regular_files(cell):
         rel = path.relative_to(cell).as_posix()
-        if rel not in _MANIFEST_EXCLUDES: lines.append(f"{sha256_file(path)}  {rel}")
-    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8"); return str(manifest)
+        if rel not in _MANIFEST_EXCLUDES:
+            lines.append(f"{sha256_file(path)}  {rel}")
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return manifest
 
 
-def build_seal_receipt(cell_dir: str | Path, genesis: str, scope: str, primary_source: str, case_id: str, cell_id: str,
-                       session_meta: Optional[Dict[str, Any]]) -> str:
-    cell = Path(cell_dir); manifest = cell / "manifests" / "file_hashes.sha256"
-    receipt = {"genesis_prompt_verbatim": genesis, "runtime_version": __version__, "scope": scope,
-               "run_mode_note": "INTERNAL profile; full crawl; no redactions", "primary_narrative_source": primary_source,
-               "case_study_id": case_id, "cell_id": cell_id, "session_header": session_meta or {"present": False},
-               "content_hash": sha256_file(manifest), "build_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    path = cell / "manifests" / "seal_receipt.json"; _write_json(path, receipt); return str(path)
+def build_cell_index(cell: Path, cell_id: str, case_id: str, manifest_hash: str, header: Optional[Dict[str, Any]], evidence: List[str], parent_hash: Optional[str], delta_type: Optional[str]) -> Path:
+    domain = ""
+    if header: domain = str(header.get("fields", {}).get("domain", ""))
+    obj = {
+        "cell_id": cell_id,
+        "content_hash": manifest_hash,
+        "created_at": _now(),
+        "domains": [domain] if domain else [],
+        "topics": [],
+        "entities": [],
+        "claims": [],
+        "evidence_types": sorted({"chat", *[Path(path).suffix.lower().lstrip(".") or "file" for path in evidence]}),
+        "parent_cell_hashes": [parent_hash] if parent_hash else [],
+        "delta_type": delta_type,
+        "case_study_id": case_id,
+    }
+    path = cell / "cell_index.json"; _write_json(path, obj); return path
 
 
-def verify_cell_dir(cell_dir: str | Path) -> Tuple[bool, List[str]]:
-    cell = Path(cell_dir); errors: List[str] = []; manifest = cell / "manifests" / "file_hashes.sha256"; receipt_path = cell / "manifests" / "seal_receipt.json"
-    if not manifest.is_file(): return False, ["missing manifests/file_hashes.sha256"]
-    if not receipt_path.is_file(): return False, ["missing manifests/seal_receipt.json"]
+def build_seal_receipt(cell: Path, scope: str, primary_source: str, case_id: str, cell_id: str, manifest_hash: str, parent_hash: Optional[str], delta_type: Optional[str]) -> Path:
+    receipt = {
+        "genesis_prompt_verbatim": AMCS_INIT_SEED_DEFAULT,
+        "scope": scope,
+        "run_mode_note": f"INTERNAL profile; full crawl; no redactions; runtime={__version__}",
+        "primary_narrative_source": primary_source,
+        "case_study_id": case_id,
+        "cell_id": cell_id,
+        "content_hash": manifest_hash,
+        "build_timestamp": _now(),
+        "parent_cell_hash": parent_hash,
+        "delta_type": delta_type,
+    }
+    path = cell / "manifests" / "seal_receipt.json"; _write_json(path, receipt); return path
+
+
+def _parse_seal_key(value: Optional[str]) -> Optional[bytes]:
+    if value is None: return None
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise AMCSSecurityError("seal key must be exactly 64 hexadecimal characters")
+    return bytes.fromhex(value)
+
+
+def build_cell_root(cell: Path, manifest: Path, receipt: Path, index: Path, cell_id: str, case_id: str, parent_hash: Optional[str], delta_type: Optional[str], seal_key: Optional[bytes]) -> Path:
+    payload = {
+        "root_version": 1,
+        "cell_id": cell_id,
+        "case_study_id": case_id,
+        "content_manifest_hash": sha256_file(manifest),
+        "seal_receipt_hash": sha256_file(receipt),
+        "cell_index_hash": sha256_file(index),
+        "parent_cell_hash": parent_hash,
+        "delta_type": delta_type,
+    }
+    root_hash = canonical_hash(payload)
+    obj = dict(payload)
+    obj["root_hash"] = root_hash
+    if seal_key is None:
+        obj["authentication_alg"] = "NONE"
+        obj["root_mac"] = None
+    else:
+        obj["authentication_alg"] = "HMAC-SHA256"
+        obj["root_mac"] = hmac.new(seal_key, _canonical_bytes(payload), hashlib.sha256).hexdigest()
+    path = cell / "manifests" / "cell_root.json"; _write_json(path, obj); return path
+
+
+def _verify_root(cell: Path, errors: List[str], seal_key: Optional[bytes]) -> None:
+    root_path = cell / "manifests" / "cell_root.json"
+    try:
+        root = json.loads(root_path.read_text(encoding="utf-8"))
+        payload = {key: root[key] for key in (
+            "root_version", "cell_id", "case_study_id", "content_manifest_hash", "seal_receipt_hash", "cell_index_hash", "parent_cell_hash", "delta_type"
+        )}
+        if canonical_hash(payload) != root.get("root_hash"): errors.append("cell root hash mismatch")
+        if sha256_file(cell / "manifests" / "file_hashes.sha256") != root.get("content_manifest_hash"): errors.append("cell root manifest binding mismatch")
+        if sha256_file(cell / "manifests" / "seal_receipt.json") != root.get("seal_receipt_hash"): errors.append("cell root receipt binding mismatch")
+        if sha256_file(cell / "cell_index.json") != root.get("cell_index_hash"): errors.append("cell root index binding mismatch")
+        alg = root.get("authentication_alg")
+        if alg == "HMAC-SHA256":
+            if seal_key is None:
+                errors.append("authenticated cell root requires verification key")
+            else:
+                expected = hmac.new(seal_key, _canonical_bytes(payload), hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(str(root.get("root_mac", "")), expected): errors.append("cell root MAC mismatch")
+        elif alg == "NONE":
+            if root.get("root_mac") is not None: errors.append("unauthenticated root must not carry MAC")
+        else:
+            errors.append("unsupported cell root authentication algorithm")
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        errors.append(f"invalid cell root: {type(exc).__name__}")
+
+
+def verify_cell_dir(cell_dir: str | Path, *, seal_key: Optional[bytes] = None) -> Tuple[bool, List[str]]:
+    cell = Path(cell_dir); errors: List[str] = []
+    manifest = cell / "manifests" / "file_hashes.sha256"
+    receipt_path = cell / "manifests" / "seal_receipt.json"
+    for rel in ("manifests/file_hashes.sha256", "manifests/seal_receipt.json", "manifests/cell_root.json", "cell_index.json", "logs/verification.log"):
+        if not (cell / rel).is_file(): errors.append(f"missing required artifact: {rel}")
+    if errors: return False, errors
+
     listed: set[str] = set()
     for raw in manifest.read_text(encoding="utf-8").splitlines():
         if not raw.strip(): continue
@@ -436,27 +629,48 @@ def verify_cell_dir(cell_dir: str | Path) -> Tuple[bool, List[str]]:
         if not match: errors.append(f"bad hash line: {raw}"); continue
         expected, rel = match.groups(); pure = PurePosixPath(rel)
         if pure.is_absolute() or ".." in pure.parts: errors.append(f"unsafe manifest path: {rel}"); continue
+        if rel in listed: errors.append(f"duplicate manifest path: {rel}"); continue
         listed.add(rel); full = _resolved_child(cell, cell.joinpath(*pure.parts))
         if not full.is_file() or full.is_symlink(): errors.append(f"missing/non-regular manifest file: {rel}")
         elif sha256_file(full) != expected: errors.append(f"hash mismatch: {rel}")
     actual = {p.relative_to(cell).as_posix() for p in _iter_regular_files(cell) if p.relative_to(cell).as_posix() not in _MANIFEST_EXCLUDES}
     for rel in sorted(actual - listed): errors.append(f"unlisted file: {rel}")
     for rel in sorted(listed - actual): errors.append(f"manifest-only file: {rel}")
-    for rel in ("data/prompt_log.json", "data/prompt_response_map.json", "data/matrices/messages.csv", "data/matrices/messages.jsonl",
-                "data/case_study_map.json", "casefiles/CF_MESSAGES.md", "README.md"):
+
+    required = [
+        "data/prompt_log.json", "data/prompt_response_map.json", "data/matrices/messages.csv", "data/matrices/messages.jsonl",
+        "data/case_study_map.json", "data/case_study_nodes.csv", "data/case_study_edges.csv", "casefiles/CF_MESSAGES.md", "README.md",
+        "schemas/case_study_map.schema.json", "schemas/cell_index.schema.json", "schemas/prompt_log.schema.json", "schemas/prompt_response_map.schema.json",
+    ]
+    for rel in required:
         if not (cell / rel).is_file(): errors.append(f"missing required artifact: {rel}")
+
+    try:
+        prompt_log = json.loads((cell / "data" / "prompt_log.json").read_text(encoding="utf-8"))
+        prm = json.loads((cell / "data" / "prompt_response_map.json").read_text(encoding="utf-8"))
+        user_ids = {entry["prompt_id"] for entry in prompt_log if entry.get("role") == "user"}
+        mapped = {pid for mapping in prm.get("mappings", []) for pid in mapping.get("responds_to_prompt_ids", [])}
+        no_response = set(prm.get("no_response_required_prompt_ids", []))
+        unanswered = set(prm.get("unanswered_prompt_ids", []))
+        if unanswered: errors.append("unanswered prompt IDs present in sealed cell")
+        if user_ids != mapped | no_response: errors.append("prompt causality coverage mismatch")
+        assistants = sum(1 for entry in prompt_log if entry.get("role") == "assistant")
+        if assistants < len(prm.get("mappings", [])): errors.append("response mapping count exceeds assistant messages")
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        errors.append(f"causality verification error: {type(exc).__name__}")
+
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         if receipt.get("content_hash") != sha256_file(manifest): errors.append("seal receipt content_hash does not match manifest")
-        if receipt.get("session_header", {}).get("present") is True:
-            for rel in ("data/session_header.json", "data/matrices/session_header.csv", "data/matrices/session_header.jsonl", "casefiles/CF_SESSION_HEADER.md"):
-                if not (cell / rel).is_file(): errors.append(f"missing session header artifact: {rel}")
-    except (OSError, json.JSONDecodeError, TypeError) as exc: errors.append(f"invalid seal receipt: {type(exc).__name__}")
-    try:
-        pl = json.loads((cell / "data/prompt_log.json").read_text(encoding="utf-8")); prm = json.loads((cell / "data/prompt_response_map.json").read_text(encoding="utf-8"))
-        assistants = sum(1 for entry in pl if entry.get("role") == "assistant")
-        if assistants != len(prm.get("mappings", [])): errors.append(f"causality coverage mismatch: assistant_messages={assistants} mappings={len(prm.get('mappings', []))}")
-    except (OSError, json.JSONDecodeError, TypeError) as exc: errors.append(f"causality verification error: {type(exc).__name__}")
+        if receipt.get("genesis_prompt_verbatim") != AMCS_INIT_SEED_DEFAULT: errors.append("mandatory genesis seed mismatch")
+        index = json.loads((cell / "cell_index.json").read_text(encoding="utf-8"))
+        if index.get("content_hash") != sha256_file(manifest): errors.append("cell index content_hash does not match manifest")
+        if index.get("cell_id") != receipt.get("cell_id"): errors.append("cell index/receipt cell_id mismatch")
+        if index.get("case_study_id") != receipt.get("case_study_id"): errors.append("cell index/receipt case_study_id mismatch")
+    except (OSError, TypeError, json.JSONDecodeError) as exc:
+        errors.append(f"metadata verification error: {type(exc).__name__}")
+
+    _verify_root(cell, errors, seal_key)
     return not errors, errors
 
 
@@ -475,10 +689,13 @@ def safe_extract_tar(archive: str | Path, destination: str | Path, *, max_member
     with tarfile.open(archive, "r:*") as tar:
         members = tar.getmembers()
         if len(members) > max_members: raise AMCSSecurityError(f"archive member limit exceeded: {len(members)} > {max_members}")
-        expanded = 0; checked: List[Tuple[tarfile.TarInfo, PurePosixPath]] = []
+        expanded = 0; checked: List[Tuple[tarfile.TarInfo, PurePosixPath]] = []; names: set[str] = set()
         for member in members:
-            pure = _validate_tar_member(member)
+            pure = _validate_tar_member(member); normalized = pure.as_posix()
+            if normalized in names: raise AMCSSecurityError(f"duplicate archive member: {normalized}")
+            names.add(normalized)
             if member.isfile():
+                if member.size < 0: raise AMCSSecurityError("negative archive member size")
                 expanded += member.size
                 if expanded > max_expanded_bytes: raise AMCSSecurityError("archive expanded-size limit exceeded")
             checked.append((member, pure))
@@ -487,7 +704,7 @@ def safe_extract_tar(archive: str | Path, destination: str | Path, *, max_member
             if member.isdir(): target.mkdir(parents=True, exist_ok=True); continue
             target.parent.mkdir(parents=True, exist_ok=True); source = tar.extractfile(member)
             if source is None: raise AMCSSecurityError(f"unable to read archive member: {member.name}")
-            with source, target.open("wb") as output: shutil.copyfileobj(source, output, length=1024 * 1024)
+            with source, target.open("xb") as output: shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
 def _single_root(extracted: Path) -> Path:
@@ -497,45 +714,89 @@ def _single_root(extracted: Path) -> Path:
 
 
 def verify_archive(archive: str | Path, *, max_members: int = DEFAULT_MAX_ARCHIVE_MEMBERS,
-                   max_expanded_bytes: int = DEFAULT_MAX_EXPANDED_BYTES) -> Tuple[bool, List[str]]:
+                   max_expanded_bytes: int = DEFAULT_MAX_EXPANDED_BYTES, seal_key: Optional[bytes] = None) -> Tuple[bool, List[str]]:
     try:
         with tempfile.TemporaryDirectory(prefix="amcs_verify_") as tmp:
             root = Path(tmp); safe_extract_tar(archive, root, max_members=max_members, max_expanded_bytes=max_expanded_bytes)
-            return verify_cell_dir(_single_root(root))
-    except (AMCSError, tarfile.TarError, OSError, ValueError) as exc: return False, [str(exc)]
+            return verify_cell_dir(_single_root(root), seal_key=seal_key)
+    except (AMCSError, tarfile.TarError, OSError, ValueError) as exc:
+        return False, [str(exc)]
 
 
 def _create_tar_from_directory(source: Path, archive: Path, arcname: str) -> None:
-    tmp = archive.with_name(archive.name + ".tmp"); tmp.unlink(missing_ok=True)
+    archive.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with tarfile.open(tmp, "w:gz") as tar: tar.add(source, arcname=arcname, recursive=True)
-        os.replace(tmp, archive)
-    finally: tmp.unlink(missing_ok=True)
+        with archive.open("xb") as raw:
+            with tarfile.open(fileobj=raw, mode="w:gz") as tar:
+                tar.add(source, arcname=arcname, recursive=True)
+            raw.flush(); os.fsync(raw.fileno())
+    except FileExistsError as exc:
+        raise AMCSSecurityError(f"refusing to overwrite existing sealed artifact: {archive}") from exc
+    except Exception:
+        archive.unlink(missing_ok=True)
+        raise
+
+
+def _validate_delta(parent_hash: Optional[str], delta_type: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    if (parent_hash is None) != (delta_type is None): raise AMCSValidationError("parent-cell-hash and delta-type must be provided together")
+    if parent_hash is not None and not re.fullmatch(r"[a-f0-9]{64}", parent_hash): raise AMCSValidationError("parent-cell-hash must be lowercase SHA-256")
+    if delta_type not in (None, "additive", "corrective", "contextual"): raise AMCSValidationError("invalid delta-type")
+    return parent_hash, delta_type
 
 
 def seal(args: argparse.Namespace) -> str:
-    cell_id = _validate_identifier(args.cell_name, "cell-name"); out_root = Path(args.out_dir).resolve(); out_root.mkdir(parents=True, exist_ok=True)
+    cell_id = _validate_identifier(args.cell_name, "cell-name")
+    out_root = Path(args.out_dir).resolve(); out_root.mkdir(parents=True, exist_ok=True)
     final = _safe_output_path(out_root, f"{cell_id}.tar.gz")
+    if final.exists(): raise AMCSSecurityError(f"refusing to overwrite existing sealed cell: {final}")
+
+    supplied_genesis = getattr(args, "genesis_prompt", None)
+    if supplied_genesis not in (None, AMCS_INIT_SEED_DEFAULT):
+        raise AMCSValidationError("AMCS v1.2.1 requires the fixed genesis seed verbatim")
+    parent_hash, delta_type = _validate_delta(getattr(args, "parent_cell_hash", None), getattr(args, "delta_type", None))
+    seal_key = _parse_seal_key(getattr(args, "seal_key_hex", None))
+
     messages = load_chat(args.input); messages, _ = deterministic_ids(messages)
     header = extract_session_header(messages) if getattr(args, "parse_session_header", True) else None
-    scope = args.scope or "entire_chat"; genesis = args.genesis_prompt or AMCS_INIT_SEED_DEFAULT; case_id = sha256_text(genesis + "|" + scope)[:16]
+    scope = getattr(args, "scope", None) or "entire_chat"
+    odt = getattr(args, "odt", None)
+    primary_source = getattr(args, "primary_narrative_source", None) or ("odt" if odt else "chat")
+    if primary_source in ("odt", "both") and not odt: raise AMCSValidationError("ODT primary narrative source requires --odt")
+    case_id = sha256_text(AMCS_INIT_SEED_DEFAULT + "|" + scope)[:16]
+
     with tempfile.TemporaryDirectory(prefix=f".{cell_id}.", dir=out_root) as tmp:
-        cell = Path(tmp) / cell_id; cell.mkdir(); copy_evidence(args.odt, messages, args.attachments_root, cell / "evidence")
-        _write_json(cell / "data" / "prompt_log.json", build_prompt_log(messages, scope)); _write_json(cell / "data" / "prompt_response_map.json", build_prompt_response_map(messages))
-        build_messages_matrix(messages, cell / "data" / "matrices"); session_meta: Dict[str, Any] = {"present": False}
-        if header:
-            paths = build_session_header_artifacts(cell, header); session_meta = {"present": True, "header_version": header.get("header_version"),
-                    "source": header.get("source"), "artifact_paths": paths, "parser_version": __version__}
-        build_case_files(cell, messages, scope, args.primary_narrative_source); build_case_study_map(cell, messages, session_header=header); write_cell_readme(cell, scope, bool(header))
-        build_file_hashes_manifest(cell); build_seal_receipt(cell, genesis, scope, args.primary_narrative_source, case_id, cell_id, session_meta)
-        ok, errors = verify_cell_dir(cell)
+        cell = Path(tmp) / cell_id; cell.mkdir()
+        evidence = copy_evidence(odt, messages, getattr(args, "attachments_root", None), cell / "evidence")
+        prompt_log = build_prompt_log(messages, scope)
+        prompt_map = build_prompt_response_map(messages)
+        _write_json(cell / "data" / "prompt_log.json", prompt_log)
+        _write_json(cell / "data" / "prompt_response_map.json", prompt_map)
+        build_messages_matrix(messages, cell / "data" / "matrices")
+        if header: build_session_header_artifacts(cell, header)
+        build_case_files(cell, messages, scope, primary_source)
+        build_case_study_outputs(cell, messages, header)
+        write_cell_readme(cell, scope, bool(header))
+        copy_reference_schemas(cell)
+
+        preseal = _preseal_errors(cell, prompt_map, header)
+        write_verification_log(cell, preseal)
+        if preseal: raise AMCSValidationError("preseal verification failed: " + "; ".join(preseal))
+
+        manifest = build_file_hashes_manifest(cell)
+        manifest_hash = sha256_file(manifest)
+        index = build_cell_index(cell, cell_id, case_id, manifest_hash, header, evidence, parent_hash, delta_type)
+        receipt = build_seal_receipt(cell, scope, primary_source, case_id, cell_id, manifest_hash, parent_hash, delta_type)
+        build_cell_root(cell, manifest, receipt, index, cell_id, case_id, parent_hash, delta_type, seal_key)
+
+        ok, errors = verify_cell_dir(cell, seal_key=seal_key)
         if not ok: raise AMCSValidationError("seal verification failed: " + "; ".join(errors))
         _create_tar_from_directory(cell, final, cell_id)
     return str(final)
 
 
 def verify(args: argparse.Namespace) -> int:
-    ok, errors = verify_archive(args.cell, max_members=args.max_archive_members, max_expanded_bytes=args.max_expanded_bytes)
+    seal_key = _parse_seal_key(getattr(args, "seal_key_hex", None))
+    ok, errors = verify_archive(args.cell, max_members=args.max_archive_members, max_expanded_bytes=args.max_expanded_bytes, seal_key=seal_key)
     if ok: print("PASS"); return 0
     print("FAIL")
     for error in errors: print("-", error)
@@ -543,19 +804,28 @@ def verify(args: argparse.Namespace) -> int:
 
 
 def assemble_supercell(args: argparse.Namespace) -> str:
-    name = _validate_identifier(args.supercell_name, "supercell-name"); out_root = Path(args.out_dir).resolve(); out_root.mkdir(parents=True, exist_ok=True)
+    name = _validate_identifier(args.supercell_name, "supercell-name")
+    out_root = Path(args.out_dir).resolve(); out_root.mkdir(parents=True, exist_ok=True)
     final = _safe_output_path(out_root, f"{name}.tar.gz")
+    if final.exists(): raise AMCSSecurityError(f"refusing to overwrite existing supercell: {final}")
+    child_hashes: List[str] = []
     for cell_path in args.cells:
         ok, errors = verify_archive(cell_path, max_members=args.max_archive_members, max_expanded_bytes=args.max_expanded_bytes)
         if not ok: raise AMCSValidationError(f"child cell failed verification: {cell_path}: {'; '.join(errors)}")
+        child_hashes.append(sha256_file(cell_path))
     with tempfile.TemporaryDirectory(prefix=f".{name}.", dir=out_root) as tmp:
-        root = Path(tmp) / name; cells = root / "cells"; cells.mkdir(parents=True); included = []
+        root = Path(tmp) / name; cells = root / "cells"; cells.mkdir(parents=True)
         for index, cell_path in enumerate(args.cells, start=1):
-            source = Path(cell_path).resolve(strict=True); destination = cells / f"cell_{index:03d}.tar.gz"; shutil.copy2(source, destination)
-            included.append({"path": destination.relative_to(root).as_posix(), "sha256": sha256_file(destination)})
-        _write_json(root / "supercell_manifest.json", {"supercell_id": f"SC_{sha256_text(name)[:12]}",
-                    "assembly_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(), "assembly_reason": args.reason or "task-scoped assembly",
-                    "included_cells": included, "assembly_scope": args.scope, "assembly_mode": args.mode, "notes": args.notes or "", "runtime_version": __version__})
+            shutil.copy2(Path(cell_path).resolve(strict=True), cells / f"cell_{index:03d}.tar.gz")
+        _write_json(root / "supercell_manifest.json", {
+            "supercell_id": f"SC_{sha256_text(name)[:12]}",
+            "assembly_timestamp": _now(),
+            "assembly_reason": args.reason or "task-scoped assembly",
+            "included_cell_hashes": child_hashes,
+            "assembly_scope": args.scope,
+            "assembly_mode": args.mode,
+            "notes": args.notes or "",
+        })
         _create_tar_from_directory(root, final, name)
     return str(final)
 
@@ -563,10 +833,11 @@ def assemble_supercell(args: argparse.Namespace) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(); sub = parser.add_subparsers(dest="cmd", required=True)
     ps = sub.add_parser("seal"); ps.add_argument("--input", required=True); ps.add_argument("--out-dir", required=True); ps.add_argument("--cell-name", required=True)
-    ps.add_argument("--scope", default="entire_chat"); ps.add_argument("--primary-narrative-source", default="chat", choices=["odt", "chat", "both"]); ps.add_argument("--odt", default=None)
-    ps.add_argument("--attachments-root", default=None); ps.add_argument("--genesis-prompt", default=None); group = ps.add_mutually_exclusive_group()
-    group.add_argument("--parse-session-header", dest="parse_session_header", action="store_true", default=True); group.add_argument("--no-parse-session-header", dest="parse_session_header", action="store_false")
-    pv = sub.add_parser("verify"); pv.add_argument("--cell", required=True); pv.add_argument("--max-archive-members", type=int, default=DEFAULT_MAX_ARCHIVE_MEMBERS); pv.add_argument("--max-expanded-bytes", type=int, default=DEFAULT_MAX_EXPANDED_BYTES)
+    ps.add_argument("--scope", default="entire_chat"); ps.add_argument("--primary-narrative-source", default=None, choices=["odt", "chat", "both"]); ps.add_argument("--odt", default=None)
+    ps.add_argument("--attachments-root", default=None); ps.add_argument("--genesis-prompt", default=None); ps.add_argument("--seal-key-hex", default=None)
+    ps.add_argument("--parent-cell-hash", default=None); ps.add_argument("--delta-type", choices=["additive", "corrective", "contextual"], default=None)
+    group = ps.add_mutually_exclusive_group(); group.add_argument("--parse-session-header", dest="parse_session_header", action="store_true", default=True); group.add_argument("--no-parse-session-header", dest="parse_session_header", action="store_false")
+    pv = sub.add_parser("verify"); pv.add_argument("--cell", required=True); pv.add_argument("--max-archive-members", type=int, default=DEFAULT_MAX_ARCHIVE_MEMBERS); pv.add_argument("--max-expanded-bytes", type=int, default=DEFAULT_MAX_EXPANDED_BYTES); pv.add_argument("--seal-key-hex", default=None)
     pa = sub.add_parser("assemble-supercell"); pa.add_argument("--cells", nargs="+", required=True); pa.add_argument("--out-dir", required=True); pa.add_argument("--supercell-name", required=True); pa.add_argument("--scope", required=True)
     pa.add_argument("--mode", default="research", choices=["analysis", "research", "consolidation", "planning"]); pa.add_argument("--reason", default=None); pa.add_argument("--notes", default=None)
     pa.add_argument("--max-archive-members", type=int, default=DEFAULT_MAX_ARCHIVE_MEMBERS); pa.add_argument("--max-expanded-bytes", type=int, default=DEFAULT_MAX_EXPANDED_BYTES)
