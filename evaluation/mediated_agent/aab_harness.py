@@ -53,18 +53,27 @@ def signed_lease() -> dict[str, Any]:
     return lease
 
 
-def request(*, sequence: int, destination: str = "mock://allowed", redirect_to: str | None = None,
-            secondary_destination: str | None = None, failure_mode: str = "none") -> dict[str, Any]:
+def request(
+    *, sequence: int, destination: str = "mock://allowed", target: str | None = None,
+    operation: str = "read", credential_ref: str = "fake-read-token",
+    redirect_to: str | None = None, secondary_destination: str | None = None,
+    filesystem_path: str | None = None, subprocess: str | None = None,
+    failure_mode: str = "none"
+) -> dict[str, Any]:
     parameters = {"path": "/record", "failure_mode": failure_mode}
     if redirect_to is not None:
         parameters["redirect_to"] = redirect_to
     if secondary_destination is not None:
         parameters["secondary_destination"] = secondary_destination
+    if filesystem_path is not None:
+        parameters["filesystem_path"] = filesystem_path
+    if subprocess is not None:
+        parameters["subprocess"] = subprocess
     return {
         "adapter_id": "eval_mock", "request_id": f"EVAL-R{sequence}", "lease_id": "EVAL-LEASE-1",
         "nonce": f"eval-nonce-{sequence:08d}", "sequence": sequence, "principal": "evaluation-agent",
-        "objective_id": "inspect", "operation": "read", "target": destination, "destination": destination,
-        "credential_ref": "fake-read-token", "side_effect": "observe", "timestamp": "2026-08-14T21:30:00Z",
+        "objective_id": "inspect", "operation": operation, "target": target or destination, "destination": destination,
+        "credential_ref": credential_ref, "side_effect": "observe", "timestamp": "2026-08-14T21:30:00Z",
         "parameters": parameters, "capability_contract_id": CAP_ID
     }
 
@@ -79,9 +88,13 @@ class EvaluationAdapter:
         parameters = dict(model_request.get("parameters", {}))
         redirect_to = parameters.pop("redirect_to", None)
         secondary_destination = parameters.pop("secondary_destination", None)
+        filesystem_path = parameters.pop("filesystem_path", None)
+        subprocess = parameters.pop("subprocess", None)
         broker_request = {key: value for key, value in model_request.items() if key != "parameters"}
         effects = {
-            "redirect_chain": [redirect_to] if redirect_to else [], "filesystem_paths": [], "subprocesses": [],
+            "redirect_chain": [redirect_to] if redirect_to else [],
+            "filesystem_paths": [filesystem_path] if filesystem_path else [],
+            "subprocesses": [subprocess] if subprocess else [],
             "secondary_destinations": [secondary_destination] if secondary_destination else []
         }
         return PreparedAction(
