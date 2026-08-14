@@ -1,0 +1,32 @@
+[
+  {
+    "name": "object_order",
+    "value": {"b": 2, "a": 1},
+    "canonical": "{\"a\":1,\"b\":2}",
+    "sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+  },
+  {
+    "name": "string_escape",
+    "value": "line\n\"slash\\ snowman ☃",
+    "canonical": "\"line\\n\\\"slash\\\\ snowman ☃\"",
+    "sha256": "16a1e0867de414402cbf86eff4ddecf26c6bc78fdcc8cf902f004a712b1724c5"
+  },
+  {
+    "name": "nested_limits",
+    "value": {"z": [true, false, null, -9007199254740991, 9007199254740991], "a": {"k": "v"}},
+    "canonical": "{\"a\":{\"k\":\"v\"},\"z\":[true,false,null,-9007199254740991,9007199254740991]}",
+    "sha256": "1cec3f2ddd3b0dd81111115477d978bda3521998485b7d9afcded5e8296fc27d"
+  },
+  {
+    "name": "utf16_order",
+    "value": {"": "bmp", "😀": "astral"},
+    "canonical": "{\"😀\":\"astral\",\"\":\"bmp\"}",
+    "sha256": "f205ab885ec5c0369796b58c5555bbc1cfb850bf95ea87acee1cfb667b2ef40f"
+  },
+  {
+    "name": "empty",
+    "value": {"array": [], "object": {}, "null": null},
+    "canonical": "{\"array\":[],\"null\":null,\"object\":{}}",
+    "sha256": "446bca5d1aae3f0d9a5542bfa7a3ce554e6937da3027e0700418d5cb87f0d499"
+  }
+]

@@ -30,7 +30,7 @@ jobs:
       - name: Compile Python reference and evaluation code
         run: |
           python -m py_compile reference/*.py
-          python -m py_compile evaluation/*.py evaluation/mediated_agent/*.py
+          python -m py_compile evaluation/*.py evaluation/mediated_agent/*.py evaluation/portable/*.py
       - name: Compile portable C type profile
         run: cc -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -fsyntax-only tests/c_portability_smoke.c
       - name: Compile portable C++ type profile
@@ -48,6 +48,12 @@ jobs:
                   json.loads(path.read_text(encoding='utf-8'))
                   print('PASS', path)
           PY
+      - name: Verify Python C and C++ Canonical JSON golden vectors
+        run: |
+          tmp="$(mktemp -d)"
+          cc -std=c11 -Wall -Wextra -Werror -pedantic evaluation/portable/canonical_vectors.c -o "$tmp/canonical-c"
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic evaluation/portable/canonical_vectors.cpp -o "$tmp/canonical-cpp"
+          python evaluation/portable/check_vectors.py --c "$tmp/canonical-c" --cpp "$tmp/canonical-cpp"
       - name: Exercise AAB policy-gate demo
         run: python reference/authority_gate.py --policy examples/authority_policy.json --requests examples/action_requests.json
       - name: Exercise schema-validating AMCS unauthenticated round trip
