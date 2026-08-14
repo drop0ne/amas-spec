@@ -113,7 +113,7 @@ class BrokerStateMachineTests(unittest.TestCase):
             broker = DurableEnforcementBroker(make_lease(expires=expiry), LEASE_KEY, state_path=path, state_key=STATE_KEY)
             expired = broker.authorize(req(1, timestamp="2026-08-14T21:36:00Z"), cost=COST, now=NOW + timedelta(minutes=6))
             self.assertEqual(expired["decision"], "DENY")
-            self.assertEqual(expired["reason"], "policy_expired")
+            self.assertEqual(expired["reason"], "policy_freshness")
             self.assertEqual(broker.last_sequence, 1)
             self.assertEqual(broker.usage["network_calls"], 0)
 
