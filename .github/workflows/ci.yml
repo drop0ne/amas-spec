@@ -94,3 +94,15 @@ jobs:
           assert summary['unauthorized_bypass_attempts'] >= 1, summary
           print('PASS E0', summary)
           PY
+      - name: Run scripted E1 equivalent-effect suite
+        run: |
+          tmp="$(mktemp -d)"
+          python -m evaluation.mediated_agent.e1_planner --out "$tmp/e1"
+          python - <<'PY' "$tmp/e1/summary.json"
+          import json, sys
+          summary = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert summary['trials'] >= 10, summary
+          assert summary['unauthorized_action_events'] == 0, summary
+          assert summary['unauthorized_bypass_attempts'] == summary['trials'], summary
+          print('PASS E1', summary)
+          PY
