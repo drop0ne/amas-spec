@@ -18,13 +18,14 @@ def mo(
     created="2026-08-12T18:00:00Z",
     scope_path=None,
     supersedes=None,
+    source_id="test-authority",
 ):
     value = {
         "object_id": object_id,
         "authority_tier": tier,
         "semantic_role": role,
         "content": object_id,
-        "source_id": "test",
+        "source_id": source_id,
         "created_at": created,
         "scope": "test",
         "scope_path": scope_path or ["global", "session", "S1"],
@@ -33,7 +34,19 @@ def mo(
     }
     if supersedes is not None:
         value["supersedes"] = supersedes
+        value["authn_context"] = "verified:test-authority"
+        value["provenance"] = {
+            "origin": source_id,
+            "chain": [supersedes, object_id],
+        }
     return value
+
+
+def authorize_supersession(candidate, superseded):
+    return (
+        candidate["source_id"] == "test-authority"
+        and candidate["authority_tier"] == superseded["authority_tier"]
+    )
 
 
 class ConflictResolutionTests(unittest.TestCase):
@@ -64,12 +77,46 @@ class ConflictResolutionTests(unittest.TestCase):
         self.assertEqual(result["rule"], "rule_1_tier_precedence")
         self.assertEqual(result["winner"], "HIGH")
 
-    def test_explicit_supersession(self):
+    def test_explicit_supersession_requires_trusted_authorizer(self):
         old = mo("OLD")
         new = mo("NEW", supersedes="OLD")
-        result = resolve_pair(old, new)
+        denied = resolve_pair(old, new)
+        self.assertEqual(denied["decision"], "HALT_ESCALATE")
+        self.assertEqual(denied["reason"], "supersession_authorization_unavailable")
+
+        result = resolve_pair(old, new, supersession_authorizer=authorize_supersession)
         self.assertEqual(result["rule"], "rule_2_explicit_supersession")
         self.assertEqual(result["winner"], "NEW")
+
+    def test_supersession_authorizer_false_or_exception_fails_closed(self):
+        old = mo("OLD")
+        new = mo("NEW", supersedes="OLD")
+        denied = resolve_pair(old, new, supersession_authorizer=lambda *_: False)
+        self.assertEqual(denied["decision"], "HALT_ESCALATE")
+        self.assertEqual(denied["reason"], "supersession_not_authorized")
+
+        def broken(*_):
+            raise RuntimeError("trust service unavailable")
+
+        failed = resolve_pair(old, new, supersession_authorizer=broken)
+        self.assertEqual(failed["decision"], "HALT_ESCALATE")
+        self.assertTrue(failed["reason"].startswith("supersession_authorizer_failed:"))
+
+    def test_supersession_provenance_must_be_forward_traceable(self):
+        old = mo("OLD")
+        new = mo("NEW", supersedes="OLD")
+        new["provenance"]["chain"] = ["NEW", "OLD"]
+        result = resolve_pair(old, new, supersession_authorizer=authorize_supersession)
+        self.assertEqual(result["decision"], "HALT_ESCALATE")
+        self.assertEqual(result["reason"], "supersession_traceability_failed")
+
+    def test_full_memory_object_admission_precedes_authority(self):
+        malformed_high = mo("HIGH", tier=0)
+        del malformed_high["source_id"]
+        valid_low = mo("LOW", tier=2)
+        result = resolve_pair(malformed_high, valid_low)
+        self.assertEqual(result["decision"], "HALT_ESCALATE")
+        self.assertEqual(result["rule"], "invalid_conflict")
 
     def test_specificity_precedes_recency(self):
         specific_old = mo(
@@ -103,7 +150,7 @@ class ConflictResolutionTests(unittest.TestCase):
     def test_cyclic_supersession_halts(self):
         a = mo("A", supersedes="B")
         b = mo("B", supersedes="A")
-        result = resolve_pair(a, b)
+        result = resolve_pair(a, b, supersession_authorizer=authorize_supersession)
         self.assertEqual(result["decision"], "HALT_ESCALATE")
 
     def test_tier_three_must_be_inference(self):

@@ -1,6 +1,6 @@
 {
   "_description": "AMAS Conflict Resolution Example: Same-Tier Conflict",
-  "_scenario": "Two Tier 2 directives provide different project budgets. Explicit supersession resolves the conflict before specificity or recency.",
+  "_scenario": "A Tier 2 directive supersedes an older Tier 2 operative object only after authenticated provenance and trusted authorization are established.",
   "conflict": {
     "object_a": {
       "object_id": "MO-DOC-015",
@@ -25,14 +25,19 @@
       "scope_path": ["global", "session", "S-1", "project", "P-1", "budget", "task", "T-1"],
       "mutable": false,
       "inference_marker": false,
-      "supersedes": "MO-DOC-015"
+      "supersedes": "MO-DOC-015",
+      "authn_context": "verified-session-user-authority",
+      "provenance": {
+        "origin": "user_message_turn_8",
+        "chain": ["MO-DOC-015", "MO-USR-023"]
+      }
     }
   },
   "resolution": {
-    "rule_applied": "Semantic-role admissibility for behavior; Rule 2 — Explicit Supersession for the operative budget state",
+    "rule_applied": "Semantic-role admissibility for behavior; Rule 2 — Explicit Supersession only if a trusted authorizer confirms authority",
     "prevailing_object": "MO-USR-023",
-    "reasoning": "MO-DOC-015 remains evidence and cannot itself direct behavior. MO-USR-023 is an explicit Tier 2 directive and identifies the superseded object. Its narrower scope would also prevail under Rule 3 if valid supersession were absent.",
-    "action": "Use $75,000 as the operative budget for the scoped task while preserving the older evidence and supersession provenance."
+    "reasoning": "The supersession metadata is traceable but is not self-authenticating. A conforming resolver must additionally receive a trusted authorization decision establishing that the issuing actor can supersede the older object at this tier/scope. Without that verifier, Rule 2 fails closed. The directive's narrower scope would also prevail under Rule 3 if no supersession claim were present.",
+    "action": "Use $75,000 only after the trusted supersession authorizer returns true; otherwise halt/escalate the supersession conflict."
   },
-  "_fallback_note": "If two same-tier directives have no valid supersession, Rule 3 applies only when one explicit scope_path strictly contains the other. If scopes tie, Rule 4 recency applies. If still unresolved, Rule 5 halts/escalates."
+  "_fallback_note": "If two same-tier directives have no authorized supersession, Rule 3 applies only when one explicit scope_path strictly contains the other. If scopes tie, Rule 4 recency applies. If still unresolved, Rule 5 halts/escalates."
 }

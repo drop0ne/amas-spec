@@ -2,25 +2,17 @@
 """AMAS AAB monotonic delegation verifier.
 
 Child authority must be a subset of parent authority across every security-
-relevant dimension. A child binds both the parent policy ID and the exact
-Canonical JSON v1 parent-policy hash, preventing ID reuse from laundering a
-silently different authority set.
+relevant dimension. Parent and child objects are admitted through the same
+policy validator used by the authorization gate so `authorized_subset` can never
+certify a schema-shaped-invalid policy.
 """
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from typing import Any
 
+from authority_gate import SIDE_EFFECT, validate_policy
 from canonical_json import CanonicalJSONError, MAX_SAFE_INTEGER, sha256 as canonical_sha256, validate as validate_canonical
-
-SIDE_EFFECT = {
-    "observe": 0,
-    "simulate": 1,
-    "reversible_write": 2,
-    "persistent_write": 3,
-    "privileged_change": 4,
-}
 
 BUDGET_FIELDS = (
     "max_actions",
@@ -38,7 +30,12 @@ SET_FIELDS = (
     "capability_contracts",
 )
 
-CONTRACT_ID_RE = re.compile(r"^cap-sha256:[0-9a-f]{64}$")
+_CHILD_FIELDS = {
+    "policy_id", "parent_policy_id", "parent_policy_hash", "principal",
+    "objectives", "operations", "targets", "destinations", "credentials",
+    "capability_contracts", "max_side_effect", "budgets", "max_delegation_depth",
+    "expires_at", "operator_escalation",
+}
 
 
 def canonical_policy_hash(policy: dict[str, Any]) -> str:
@@ -62,15 +59,13 @@ def parse_time(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _string_set(value: Any, name: str, *, contracts: bool = False) -> set[str]:
+def _string_set(value: Any, name: str) -> set[str]:
     if not isinstance(value, list):
         raise ValueError(f"{name} must be an array")
     if any(not isinstance(item, str) or not item for item in value):
         raise ValueError(f"{name} must contain non-empty strings")
     if len(value) != len(set(value)):
         raise ValueError(f"{name} contains duplicates")
-    if contracts and any(not CONTRACT_ID_RE.fullmatch(item) for item in value):
-        raise ValueError("capability_contracts must be content-addressed IDs")
     return set(value)
 
 
@@ -93,25 +88,27 @@ def verify_child_policy(parent: dict[str, Any], child: dict[str, Any]) -> dict[s
     try:
         if not isinstance(parent, dict) or not isinstance(child, dict):
             raise ValueError("parent and child must be objects")
-        validate_canonical(parent)
-        validate_canonical(child)
+        # A delegation parent is a root policy; a child must carry exact parent
+        # bindings. The shared validator also rejects unknown fields.
+        validate_policy(parent)
+        if "parent_policy_id" in parent or "parent_policy_hash" in parent:
+            raise ValueError("delegation parent must be a root authority policy")
+        validate_policy(child)
+        if set(child) - _CHILD_FIELDS:
+            raise ValueError("unknown child policy field")
+        if "parent_policy_id" not in child or "parent_policy_hash" not in child:
+            raise ValueError("child policy is missing parent binding")
         parent_hash = canonical_policy_hash(parent)
 
-        if not isinstance(parent.get("policy_id"), str) or not parent["policy_id"]:
-            raise ValueError("parent policy_id")
-        if not isinstance(child.get("policy_id"), str) or not child["policy_id"]:
-            raise ValueError("child policy_id")
         if child["policy_id"] == parent["policy_id"]:
             raise ValueError("child policy_id must differ from parent")
-        if not isinstance(child.get("principal"), str) or not child["principal"]:
-            raise ValueError("child principal")
 
-        checks.append(("parent_id_binding", child.get("parent_policy_id") == parent["policy_id"]))
-        checks.append(("parent_hash_binding", child.get("parent_policy_hash") == parent_hash))
+        checks.append(("parent_id_binding", child["parent_policy_id"] == parent["policy_id"]))
+        checks.append(("parent_hash_binding", child["parent_policy_hash"] == parent_hash))
 
         for field in SET_FIELDS:
-            parent_values = _string_set(parent.get(field, []), f"parent.{field}", contracts=field == "capability_contracts")
-            child_values = _string_set(child.get(field, []), f"child.{field}", contracts=field == "capability_contracts")
+            parent_values = _string_set(parent.get(field, []), f"parent.{field}")
+            child_values = _string_set(child.get(field, []), f"child.{field}")
             checks.append((f"subset:{field}", child_values.issubset(parent_values)))
 
         checks.append((
@@ -155,9 +152,12 @@ def verify_child_policy(parent: dict[str, Any], child: dict[str, Any]) -> dict[s
 
 
 def derive_child_policy(parent: dict[str, Any], *, policy_id: str, principal: str, **overrides: Any) -> dict[str, Any]:
-    """Create a child candidate by narrowing a parent, then verify it."""
+    """Create a child candidate by narrowing a root parent, then verify it."""
     if not isinstance(policy_id, str) or not policy_id or not isinstance(principal, str) or not principal:
         raise ValueError("policy_id and principal must be non-empty strings")
+    validate_policy(parent)
+    if "parent_policy_id" in parent or "parent_policy_hash" in parent:
+        raise ValueError("derive_child_policy requires a root parent policy")
     parent_hash = canonical_policy_hash(parent)
     child = {
         "policy_id": policy_id,
@@ -180,6 +180,8 @@ def derive_child_policy(parent: dict[str, Any], *, policy_id: str, principal: st
     if protected & set(overrides):
         raise ValueError("parent binding fields are derived and cannot be overridden")
     for key, value in overrides.items():
+        if key not in _CHILD_FIELDS:
+            raise ValueError(f"unknown child override:{key}")
         if key == "budgets":
             if not isinstance(value, dict):
                 raise ValueError("budgets override must be an object")

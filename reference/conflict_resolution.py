@@ -1,39 +1,33 @@
 #!/usr/bin/env python3
 """Deterministic AMAS 2.0-draft conflict arbitration reference.
 
-This module implements the normative ordering in SPEC.md. It deliberately keeps
-semantic role separate from authority tier: evidence, observations, and
-inferences may inform reasoning but cannot become executable directives merely
-because their text contains imperative language.
+This module implements the normative ordering in SPEC.md. Semantic role remains
+independent from authority tier, and explicit supersession is treated as an
+authority-bearing operation rather than trusted because an object names another
+object. A trusted caller must verify supersession authority.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from itertools import combinations
-from typing import Any
+from typing import Any, Callable
 
-DIRECTIVE = "DIRECTIVE"
-EVIDENCE = "EVIDENCE"
-OBSERVATION = "OBSERVATION"
-INFERENCE = "INFERENCE"
+from memory_object_validation import (
+    DIRECTIVE,
+    EVIDENCE,
+    INFERENCE,
+    OBSERVATION,
+    MemoryObjectValidationError,
+    parse_time,
+    supersession_is_traceable,
+    validate_memory_object,
+)
+
 SEMANTIC_ROLES = {DIRECTIVE, EVIDENCE, OBSERVATION, INFERENCE}
-
-
-def parse_time(value: str) -> datetime:
-    if value.endswith("Z"):
-        value = value[:-1] + "+00:00"
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        raise ValueError("timestamps must include timezone")
-    return dt.astimezone(timezone.utc)
+SupersessionAuthorizer = Callable[[dict[str, Any], dict[str, Any]], bool]
 
 
 def _scope_relation(a: list[str], b: list[str]) -> int:
-    """Return 1 if a is more specific, -1 if b is, otherwise 0.
-
-    Scope specificity is defined only by strict prefix containment. Incomparable
-    scope paths are not guessed at and therefore do not resolve Rule 3.
-    """
+    """Return 1 if a is more specific, -1 if b is, otherwise 0."""
     if not isinstance(a, list) or not isinstance(b, list) or not a or not b:
         raise ValueError("scope_path must be a non-empty array")
     if any(not isinstance(part, str) or not part for part in a + b):
@@ -49,30 +43,8 @@ def _scope_relation(a: list[str], b: list[str]) -> int:
 
 
 def _validate_object(obj: dict[str, Any]) -> None:
-    required = {
-        "object_id",
-        "authority_tier",
-        "semantic_role",
-        "created_at",
-        "scope_path",
-    }
-    missing = required - set(obj)
-    if missing:
-        raise ValueError(f"missing fields:{','.join(sorted(missing))}")
-    if not isinstance(obj["object_id"], str) or not obj["object_id"]:
-        raise ValueError("invalid object_id")
-    tier = obj["authority_tier"]
-    if not isinstance(tier, int) or isinstance(tier, bool) or tier not in range(4):
-        raise ValueError("invalid authority_tier")
-    role = obj["semantic_role"]
-    if role not in SEMANTIC_ROLES:
-        raise ValueError("invalid semantic_role")
-    if tier == 3 and role != INFERENCE:
-        raise ValueError("Tier 3 objects must be INFERENCE")
-    if role == INFERENCE and tier != 3:
-        raise ValueError("INFERENCE objects must be Tier 3")
-    parse_time(obj["created_at"])
-    _scope_relation(obj["scope_path"], obj["scope_path"])
+    """Require full Memory Object admission before any authority decision."""
+    validate_memory_object(obj)
 
 
 def directive_admissible(obj: dict[str, Any]) -> bool:
@@ -81,17 +53,43 @@ def directive_admissible(obj: dict[str, Any]) -> bool:
     return obj["semantic_role"] == DIRECTIVE
 
 
+def _supersession_authorized(
+    candidate: dict[str, Any],
+    superseded: dict[str, Any],
+    authorizer: SupersessionAuthorizer | None,
+) -> tuple[bool, str]:
+    """Fail closed unless traceability and external authorization both pass."""
+    if not supersession_is_traceable(candidate, superseded):
+        return False, "supersession_traceability_failed"
+    if authorizer is None:
+        return False, "supersession_authorization_unavailable"
+    try:
+        decision = authorizer(candidate, superseded)
+    except Exception as exc:
+        return False, f"supersession_authorizer_failed:{type(exc).__name__}"
+    if not isinstance(decision, bool):
+        return False, "supersession_authorizer_failed:TypeError"
+    if not decision:
+        return False, "supersession_not_authorized"
+    return True, "authorized"
+
+
 def resolve_pair(
     object_a: dict[str, Any],
     object_b: dict[str, Any],
     *,
     conflict_kind: str = "directive",
+    supersession_authorizer: SupersessionAuthorizer | None = None,
 ) -> dict[str, Any]:
     """Resolve a conflict without probabilistic or text-semantic guessing.
 
     `conflict_kind="directive"` first applies semantic-role admissibility. Text
-    in EVIDENCE/OBSERVATION/INFERENCE is data even if it contains commands.
-    `conflict_kind="claim"` compares the objects as epistemic claims.
+    in EVIDENCE/OBSERVATION/INFERENCE remains data even when it contains command
+    language. `conflict_kind="claim"` compares objects as epistemic claims.
+
+    Explicit supersession never resolves from object metadata alone. The caller
+    must supply a trusted `supersession_authorizer` that authenticates the actor
+    and verifies that the actor held authority over the superseded tier/scope.
     """
     try:
         _validate_object(object_a)
@@ -135,8 +133,7 @@ def resolve_pair(
                 "reason": "higher-authority tier prevails",
             }
 
-        # Rule 2 — Explicit supersession. Contradictory/cyclic supersession is
-        # not guessed through; it fails closed to operator resolution.
+        # Rule 2 — Explicit supersession. Self-asserted metadata is never enough.
         a_supersedes_b = object_a.get("supersedes") == object_b["object_id"]
         b_supersedes_a = object_b.get("supersedes") == object_a["object_id"]
         if a_supersedes_b and b_supersedes_a:
@@ -150,12 +147,21 @@ def resolve_pair(
         if a_supersedes_b or b_supersedes_a:
             winner = object_a if a_supersedes_b else object_b
             loser = object_b if winner is object_a else object_a
+            authorized, reason = _supersession_authorized(winner, loser, supersession_authorizer)
+            if not authorized:
+                return {
+                    "decision": "HALT_ESCALATE",
+                    "rule": "rule_5_unresolved",
+                    "winner": None,
+                    "loser": None,
+                    "reason": reason,
+                }
             return {
                 "decision": "RESOLVED",
                 "rule": "rule_2_explicit_supersession",
                 "winner": winner["object_id"],
                 "loser": loser["object_id"],
-                "reason": "authorized supersession relationship is explicit",
+                "reason": "supersession is traceable and externally authorized",
             }
 
         # Rule 3 — Specificity. Only explicit scope-path containment counts.
@@ -171,8 +177,7 @@ def resolve_pair(
                 "reason": "strictly narrower explicit scope path prevails",
             }
 
-        # Rule 4 — Recency. Timestamps are compared only after tier,
-        # supersession, and explicit scope specificity fail to resolve.
+        # Rule 4 — Recency, only after stronger rules tie.
         created_a = parse_time(object_a["created_at"])
         created_b = parse_time(object_b["created_at"])
         if created_a != created_b:
@@ -186,9 +191,6 @@ def resolve_pair(
                 "reason": "newer object prevails after stronger rules tie",
             }
 
-        # Rule 5 — Unique conservative default. There is deliberately no
-        # implementation-selected "more restrictive" fallback because that
-        # would reintroduce ambiguity into a deterministic protocol.
         return {
             "decision": "HALT_ESCALATE",
             "rule": "rule_5_unresolved",
@@ -196,7 +198,7 @@ def resolve_pair(
             "loser": None,
             "reason": "conflict remains unresolved; operator decision required",
         }
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, MemoryObjectValidationError) as exc:
         return {
             "decision": "HALT_ESCALATE",
             "rule": "invalid_conflict",
@@ -206,15 +208,13 @@ def resolve_pair(
         }
 
 
-def resolve_set(objects: list[dict[str, Any]], *, conflict_kind: str = "directive") -> dict[str, Any]:
-    """Resolve a multi-object conflict by unique pairwise domination.
-
-    A candidate is a winner only if it defeats every other candidate under the
-    exact pairwise protocol. This intentionally conservative rule is independent
-    of input order and avoids inventing transitive precedence where pairwise
-    arbitration left a relation unresolved. If no unique all-dominator exists,
-    Rule 5 applies.
-    """
+def resolve_set(
+    objects: list[dict[str, Any]],
+    *,
+    conflict_kind: str = "directive",
+    supersession_authorizer: SupersessionAuthorizer | None = None,
+) -> dict[str, Any]:
+    """Resolve a multi-object conflict by unique pairwise domination."""
     try:
         if not isinstance(objects, list) or not objects:
             raise ValueError("objects must be a non-empty array")
@@ -255,7 +255,12 @@ def resolve_set(objects: list[dict[str, Any]], *, conflict_kind: str = "directiv
         wins: dict[str, set[str]] = {obj["object_id"]: set() for obj in candidates}
         pairwise: list[dict[str, Any]] = []
         for left, right in combinations(candidates, 2):
-            result = resolve_pair(left, right, conflict_kind=conflict_kind)
+            result = resolve_pair(
+                left,
+                right,
+                conflict_kind=conflict_kind,
+                supersession_authorizer=supersession_authorizer,
+            )
             pairwise.append({
                 "object_a": left["object_id"],
                 "object_b": right["object_id"],
@@ -286,7 +291,7 @@ def resolve_set(objects: list[dict[str, Any]], *, conflict_kind: str = "directiv
             "excluded_non_directives": sorted(excluded),
             "pairwise": pairwise,
         }
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, MemoryObjectValidationError) as exc:
         return {
             "decision": "HALT_ESCALATE",
             "rule": "invalid_conflict",

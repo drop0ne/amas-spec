@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """AMAS AAB reference authorization gate.
 
-Evaluates structured action requests against an explicit authority policy.
-This module never executes the requested action.
+Evaluates structured action requests against an explicit authority policy. This
+module never executes the requested action. The public validation helpers are
+shared by the broker and delegation code so schema-shaped authority objects do
+not acquire different meanings in different runtime components.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,14 +27,17 @@ SIDE_EFFECT = {
 }
 
 _POLICY_REQUIRED = {"policy_id", "principal", "objectives", "operations", "targets", "max_side_effect", "budgets", "expires_at"}
-_POLICY_ALLOWED = _POLICY_REQUIRED | {
-    "destinations", "credentials", "capability_contracts", "max_delegation_depth",
-    "operator_escalation", "parent_policy_id", "parent_policy_hash",
-}
+_POLICY_OPTIONAL = {"destinations", "credentials", "capability_contracts", "max_delegation_depth", "operator_escalation"}
+_PARENT_POLICY_ALLOWED = _POLICY_REQUIRED | _POLICY_OPTIONAL
+_CHILD_BINDING_FIELDS = {"parent_policy_id", "parent_policy_hash"}
+_CHILD_POLICY_REQUIRED = _POLICY_REQUIRED | _CHILD_BINDING_FIELDS
+_CHILD_POLICY_ALLOWED = _CHILD_POLICY_REQUIRED | _POLICY_OPTIONAL
 _REQUEST_REQUIRED = {"request_id", "principal", "objective_id", "operation", "target", "side_effect", "usage", "timestamp"}
 _REQUEST_ALLOWED = _REQUEST_REQUIRED | {"destination", "credential_ref", "capability_contract_id", "delegation_depth"}
 _USAGE_KEYS = {"actions", "network_calls", "egress_bytes", "wall_clock_seconds"}
 _BUDGET_KEYS = {"max_actions", "max_network_calls", "max_egress_bytes", "max_wall_clock_seconds"}
+_CONTRACT_ID_RE = re.compile(r"^cap-sha256:[0-9a-f]{64}$")
+_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def canonical_hash(obj: Any) -> str:
@@ -51,7 +57,10 @@ def parse_time(value: str) -> datetime:
         raise ValueError("timestamp must be a non-empty string")
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
-    dt = datetime.fromisoformat(value)
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("invalid date-time") from exc
     if dt.tzinfo is None:
         raise ValueError("timestamps must include timezone")
     return dt.astimezone(timezone.utc)
@@ -66,21 +75,42 @@ def _require_shape(obj: dict[str, Any], required: set[str], allowed: set[str], n
         raise ValueError(f"unknown {name} field:{extra[0]}")
 
 
-def _string_array(value: Any, name: str) -> list[str]:
+def _string_array(value: Any, name: str, *, contracts: bool = False) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
         raise ValueError(f"{name} must contain non-empty strings")
     if len(value) != len(set(value)):
         raise ValueError(f"{name} contains duplicates")
+    if contracts and any(_CONTRACT_ID_RE.fullmatch(item) is None for item in value):
+        raise ValueError("capability_contracts must contain content-addressed contract IDs")
     return value
 
 
-def _validate_policy_shape(policy: dict[str, Any]) -> None:
-    _require_shape(policy, _POLICY_REQUIRED, _POLICY_ALLOWED, "policy")
+def validate_policy(policy: dict[str, Any]) -> None:
+    """Validate either a root authority policy or a delegated child policy."""
+    if not isinstance(policy, dict):
+        raise TypeError("policy must be an object")
+    validate_canonical(policy)
+
+    has_parent_id = "parent_policy_id" in policy
+    has_parent_hash = "parent_policy_hash" in policy
+    if has_parent_id != has_parent_hash:
+        raise ValueError("child policy parent binding must contain both ID and hash")
+    if has_parent_id:
+        _require_shape(policy, _CHILD_POLICY_REQUIRED, _CHILD_POLICY_ALLOWED, "child policy")
+        if not isinstance(policy["parent_policy_id"], str) or not policy["parent_policy_id"]:
+            raise ValueError("invalid child policy field:parent_policy_id")
+        if not isinstance(policy["parent_policy_hash"], str) or _HASH_RE.fullmatch(policy["parent_policy_hash"]) is None:
+            raise ValueError("invalid child policy field:parent_policy_hash")
+    else:
+        _require_shape(policy, _POLICY_REQUIRED, _PARENT_POLICY_ALLOWED, "policy")
+
     for field in ("policy_id", "principal", "expires_at"):
         if not isinstance(policy[field], str) or not policy[field]:
             raise ValueError(f"invalid policy field:{field}")
-    for field in ("objectives", "operations", "targets", "destinations", "credentials", "capability_contracts"):
+    for field in ("objectives", "operations", "targets", "destinations", "credentials"):
         _string_array(policy.get(field, []), field)
+    _string_array(policy.get("capability_contracts", []), "capability_contracts", contracts=True)
+
     if policy["max_side_effect"] not in SIDE_EFFECT:
         raise KeyError("unknown max_side_effect")
     budgets = policy["budgets"]
@@ -94,10 +124,16 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
         raise ValueError("invalid max_delegation_depth")
     if "operator_escalation" in policy and not isinstance(policy["operator_escalation"], bool):
         raise ValueError("operator_escalation must be boolean")
+    if has_parent_id and policy.get("operator_escalation", False) is not False:
+        raise ValueError("delegated child policy cannot enable operator escalation")
     parse_time(policy["expires_at"])
 
 
-def _validate_request_shape(request: dict[str, Any]) -> None:
+def validate_action_request(request: dict[str, Any]) -> None:
+    """Validate the policy-gate request shape and Canonical JSON value domain."""
+    if not isinstance(request, dict):
+        raise TypeError("request must be an object")
+    validate_canonical(request)
     _require_shape(request, _REQUEST_REQUIRED, _REQUEST_ALLOWED, "request")
     for field in ("request_id", "principal", "objective_id", "operation", "target", "timestamp"):
         if not isinstance(request[field], str) or not request[field]:
@@ -108,6 +144,9 @@ def _validate_request_shape(request: dict[str, Any]) -> None:
         value = request.get(field)
         if value is not None and (not isinstance(value, str) or not value):
             raise ValueError(f"invalid request field:{field}")
+    contract_id = request.get("capability_contract_id")
+    if contract_id is not None and _CONTRACT_ID_RE.fullmatch(contract_id) is None:
+        raise ValueError("invalid capability_contract_id")
     usage = request["usage"]
     if not isinstance(usage, dict) or set(usage) != _USAGE_KEYS:
         raise ValueError("usage must contain exactly the four usage fields")
@@ -136,12 +175,8 @@ def evaluate(policy: dict[str, Any], request: dict[str, Any], now: datetime | No
     checks: list[tuple[str, bool, bool]] = []
 
     try:
-        if not isinstance(policy, dict) or not isinstance(request, dict):
-            raise TypeError("policy and request must be objects")
-        validate_canonical(policy)
-        validate_canonical(request)
-        _validate_policy_shape(policy)
-        _validate_request_shape(request)
+        validate_policy(policy)
+        validate_action_request(request)
 
         expires = parse_time(policy["expires_at"])
         checks.append(("policy_freshness", now <= expires, True))

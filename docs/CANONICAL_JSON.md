@@ -1,7 +1,8 @@
 # AMAS/AAB Canonical JSON v1
 
 **Status:** Normative reference encoding for security-object hashing/signing in this repository.  
-**Reference:** `reference/canonical_json.py`
+**Reference:** `reference/canonical_json.py`  
+**Portable types:** `docs/PORTABLE_TYPES.md`
 
 ## Purpose
 
@@ -18,6 +19,20 @@ Security objects hashed or authenticated under Canonical JSON v1 may contain onl
 - `true`, `false`, and `null`.
 
 Forbidden values include floating-point numbers (including finite floats), `NaN`, infinities, integers outside the interoperable safe range, surrogate code points, non-string object keys, sets, tuples, bytes, or custom language objects.
+
+## C/C++ portability
+
+Canonical JSON wire values MUST map to the fixed-width domains in `docs/PORTABLE_TYPES.md`.
+
+In particular:
+
+- Canonical JSON integers fit `int64_t`; nonnegative counters/limits fit `uint64_t` while remaining restricted to the narrower `2^53-1` interoperability ceiling;
+- compact protocol enums and authority tiers SHOULD use fixed-width byte-sized internal representations such as `uint8_t`;
+- booleans are typed booleans and MUST NOT compare equal to integer `0` or `1` for protocol equality;
+- hashes may be stored internally as 32-byte arrays and are serialized as 64 lowercase hexadecimal characters where the enclosing schema specifies a SHA-256 value;
+- native `long`, `size_t`, pointer values, memory addresses, platform-width integers, or implementation-specific objects MUST NOT define wire semantics.
+
+A C or C++ implementation does not need to reproduce Python container types. It needs to reproduce the same typed JSON value model and the exact bytes defined below.
 
 ## Property ordering
 
@@ -41,6 +56,8 @@ No insignificant whitespace is emitted.
 ## Integers only
 
 The authority/security objects in this repository do not require binary floating-point values. Excluding floats avoids cross-runtime formatting and rounding ambiguity. The safe integer bound avoids silent precision loss in common JSON runtimes whose exact integer interoperability is limited by IEEE-754 binary64.
+
+The `±(2^53-1)` range is intentionally a subset of standard fixed-width C/C++ `int64_t`/`uint64_t` capacity. This gives C/C++ implementations deterministic native storage while preserving exact JSON interoperability with runtimes that use binary64 numbers.
 
 If an adapter needs a fractional domain value, it MUST normalize it before the value enters an AAB security object, for example as a scaled integer or an adapter-defined canonical decimal string.
 

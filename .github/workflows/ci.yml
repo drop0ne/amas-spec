@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - "hardening/**"
 
 permissions:
   contents: read
@@ -23,10 +24,14 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - name: Install pinned test dependencies
-        run: python -m pip install --disable-pip-version-check 'jsonschema==4.23.0'
-      - name: Compile reference code
+      - name: Install pinned conformance dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Compile Python reference code
         run: python -m py_compile reference/*.py
+      - name: Compile portable C type profile
+        run: cc -std=c11 -Wall -Wextra -Werror -pedantic -Iinclude -fsyntax-only tests/c_portability_smoke.c
+      - name: Compile portable C++ type profile
+        run: c++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iinclude -fsyntax-only tests/cpp_portability_smoke.cpp
       - name: Run unit, adversarial, schema, and generated-artifact conformance tests
         run: python -m unittest discover -s tests -v
       - name: Validate JSON syntax across schemas examples and adversarial corpora
@@ -42,14 +47,25 @@ jobs:
           PY
       - name: Exercise AAB policy-gate demo
         run: python reference/authority_gate.py --policy examples/authority_policy.json --requests examples/action_requests.json
-      - name: Exercise AMCS unauthenticated round trip
+      - name: Exercise schema-validating AMCS unauthenticated round trip
         run: |
           tmp="$(mktemp -d)"
-          python reference/amcs.py seal --input examples/chat_minimal.json --out-dir "$tmp" --cell-name CI_CELL
-          python reference/amcs.py verify --cell "$tmp/CI_CELL.tar.gz"
-      - name: Exercise AMCS authenticated-root round trip
+          python reference/amcs_runtime.py seal --input examples/chat_minimal.json --out-dir "$tmp" --cell-name CI_CELL
+          python reference/amcs_runtime.py verify --cell "$tmp/CI_CELL.tar.gz"
+      - name: Reject schema-invalid AMCS input before sealing
+        run: |
+          tmp="$(mktemp -d)"
+          cat > "$tmp/bad.json" <<'JSON'
+          [{"role":"user","content":"test","timestamp":123,"no_response_required":true}]
+          JSON
+          if python reference/amcs_runtime.py seal --input "$tmp/bad.json" --out-dir "$tmp" --cell-name BAD_CELL; then
+            echo "invalid input unexpectedly sealed"
+            exit 1
+          fi
+          test ! -e "$tmp/BAD_CELL.tar.gz"
+      - name: Exercise schema-validating AMCS authenticated-root round trip
         run: |
           tmp="$(mktemp -d)"
           key="1111111111111111111111111111111111111111111111111111111111111111"
-          python reference/amcs.py seal --input examples/chat_minimal.json --out-dir "$tmp" --cell-name CI_AUTH --seal-key-hex "$key"
-          python reference/amcs.py verify --cell "$tmp/CI_AUTH.tar.gz" --seal-key-hex "$key"
+          python reference/amcs_runtime.py seal --input examples/chat_minimal.json --out-dir "$tmp" --cell-name CI_AUTH --seal-key-hex "$key"
+          python reference/amcs_runtime.py verify --cell "$tmp/CI_AUTH.tar.gz" --seal-key-hex "$key"
