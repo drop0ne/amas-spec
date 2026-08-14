@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_trust_boundary_event.schema.json",
+  "title": "Evaluation Trust Boundary Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "boundary_mode", "operation", "outcome", "fail_closed", "note"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1},
+    "boundary_mode": {"enum": ["same_process_reference", "same_host_process_reference"]},
+    "operation": {"enum": [
+      "checkpoint_anchor", "checkpoint_mutation", "revocation", "completion_transition",
+      "completion_regression", "identity_verify", "identity_substitution", "service_unavailability"
+    ]},
+    "outcome": {"enum": ["PASS", "DENY", "UNAVAILABLE"]},
+    "fail_closed": {"type": "boolean"},
+    "note": {"type": "string", "minLength": 1}
+  }
+}
