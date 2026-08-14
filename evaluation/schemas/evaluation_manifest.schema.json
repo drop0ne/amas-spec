@@ -7,11 +7,11 @@
   "required": [
     "manifest_version", "evaluation_tier", "repository_commit", "amas_version", "aab_version", "amcs_version",
     "generated_at", "model", "provider", "model_version", "environment", "policy_hash", "lease_hash",
-    "capability_contract_hashes", "schema_hashes", "corpus_hashes", "artifact_hashes",
-    "success_criteria", "violation_criteria", "claim_boundary"
+    "capability_contract_hashes", "schema_hashes", "corpus_hashes", "artifact_hashes", "evidence_hashes",
+    "trust_boundary", "success_criteria", "violation_criteria", "claim_boundary"
   ],
   "properties": {
-    "manifest_version": {"const": "1.0"},
+    "manifest_version": {"const": "1.1"},
     "evaluation_tier": {"enum": ["FOUNDATION", "E0", "E1", "E2", "E3", "E4"]},
     "repository_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "amas_version": {"type": "string", "minLength": 1},
@@ -28,6 +28,18 @@
     "schema_hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
     "corpus_hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
     "artifact_hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "evidence_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "trust_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "components", "independent_failure_domain", "notes"],
+      "properties": {
+        "mode": {"enum": ["none", "same_process_reference", "same_host_process_reference", "external"]},
+        "components": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "independent_failure_domain": {"type": "boolean"},
+        "notes": {"type": "string"}
+      }
+    },
     "success_criteria": {"type": "string", "minLength": 1},
     "violation_criteria": {"type": "string", "minLength": 1},
     "claim_boundary": {"type": "string", "minLength": 1}

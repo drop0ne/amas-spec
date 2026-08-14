@@ -14,7 +14,7 @@ if str(REFERENCE) not in sys.path:
     sys.path.insert(0, str(REFERENCE))
 
 import canonical_json  # type: ignore
-from evaluation.mediated_agent.aab_harness import AABEvaluationHarness, EVAL_NOW, request, signed_lease
+from evaluation.mediated_agent.aab_harness import AABEvaluationHarness, CAP_ID, EVAL_NOW, request, signed_lease
 from evaluation.mediated_agent.runner import _schemas, _validate
 from evaluation.release_check import run_check
 
@@ -22,7 +22,11 @@ CORPUS = ROOT / "evaluation" / "corpora" / "e1_scripted.json"
 
 
 def _policy_hash() -> str:
-    return hashlib.sha256(canonical_json.bytes_(signed_lease()["policy"])).hexdigest()
+    return canonical_json.sha256(signed_lease()["policy"])
+
+
+def _lease_hash() -> str:
+    return canonical_json.sha256(signed_lease())
 
 
 def _trial(task_id: str, policy_hash: str) -> dict[str, Any]:
@@ -83,6 +87,7 @@ def run_e1(out_dir: Path) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
     policy_hash = _policy_hash()
+    lease_hash = _lease_hash()
     schemas, registry = _schemas()
     trials: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
@@ -133,15 +138,42 @@ def run_e1(out_dir: Path) -> dict[str, Any]:
         "unauthorized_action_events": 0,
         "fail_closed_events": len(trials),
     }
-    run_check(out_dir / "evaluation_manifest.json")
-    for name, value in (
-        ("trials.json", trials),
-        ("results.json", results),
-        ("violations.json", violations),
-        ("summary.json", summary),
-    ):
-        (out_dir / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"trials": trials, "results": results, "violations": violations, "summary": summary}
+    values = {
+        "trials.json": trials,
+        "results.json": results,
+        "violations.json": violations,
+        "summary.json": summary,
+    }
+    evidence_files: dict[str, Path] = {}
+    for name, value in values.items():
+        path = out_dir / name
+        path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        evidence_files[name] = path
+
+    environment = {
+        "environment_id": "synthetic-e1-aab-v1",
+        "topology": "scripted planner -> EnforcementBroker -> MediatedExecutor -> capability contract -> completion journal -> in-memory synthetic adapter",
+        "trusted_components": ["aab_reference_broker", "mediated_executor", "capability_contract", "completion_journal", "synthetic_adapter"],
+        "effect_surfaces": ["mock.read", "synthetic.redirect", "synthetic.secondary_destination", "synthetic.filesystem", "synthetic.subprocess"],
+        "hidden_configuration_hash": hashlib.sha256(b"synthetic-e1-aab-v1").hexdigest(),
+        "notes": "No real network, filesystem write, subprocess execution, credential, or production effect capability.",
+    }
+    manifest = run_check(
+        out_dir / "evaluation_manifest.json",
+        evaluation_tier="E1",
+        environment=environment,
+        policy_hash=policy_hash,
+        lease_hash=lease_hash,
+        capability_contract_hashes=[CAP_ID.removeprefix("cap-sha256:")],
+        evidence_files=evidence_files,
+        trust_boundary={
+            "mode": "same_process_reference",
+            "components": ["aab_reference_broker", "completion_journal", "synthetic_adapter"],
+            "independent_failure_domain": False,
+            "notes": "E1 executes in one process; trust-service process isolation is tested separately and is not A4 evidence.",
+        },
+    )
+    return {"manifest": manifest, "trials": trials, "results": results, "violations": violations, "summary": summary}
 
 
 def main() -> int:

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_model_proposal.schema.json",
+  "title": "Untrusted Model Proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "target", "destination", "credential_ref", "side_effect", "parameters"],
+  "properties": {
+    "operation": {"type": "string", "minLength": 1},
+    "target": {"type": "string", "minLength": 1},
+    "destination": {"type": ["string", "null"], "minLength": 1},
+    "credential_ref": {"type": ["string", "null"], "minLength": 1},
+    "side_effect": {"enum": ["observe", "simulate", "reversible_write", "persistent_write", "privileged_change"]},
+    "parameters": {"type": "object"}
+  }
+}
