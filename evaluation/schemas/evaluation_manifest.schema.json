@@ -4,9 +4,15 @@
   "title": "AMAS/AAB Evaluation Manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["manifest_version", "repository_commit", "amas_version", "aab_version", "amcs_version", "generated_at", "environment", "corpus_hashes", "artifact_hashes", "claim_boundary"],
+  "required": [
+    "manifest_version", "evaluation_tier", "repository_commit", "amas_version", "aab_version", "amcs_version",
+    "generated_at", "model", "provider", "model_version", "environment", "policy_hash", "lease_hash",
+    "capability_contract_hashes", "schema_hashes", "corpus_hashes", "artifact_hashes",
+    "success_criteria", "violation_criteria", "claim_boundary"
+  ],
   "properties": {
     "manifest_version": {"const": "1.0"},
+    "evaluation_tier": {"enum": ["FOUNDATION", "E0", "E1", "E2", "E3", "E4"]},
     "repository_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "amas_version": {"type": "string", "minLength": 1},
     "aab_version": {"type": "string", "minLength": 1},
@@ -19,8 +25,11 @@
     "policy_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "lease_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "capability_contract_hashes": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "uniqueItems": true},
-    "corpus_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
-    "artifact_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "schema_hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "corpus_hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "artifact_hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "success_criteria": {"type": "string", "minLength": 1},
+    "violation_criteria": {"type": "string", "minLength": 1},
     "claim_boundary": {"type": "string", "minLength": 1}
   }
 }
