@@ -2,21 +2,25 @@
   {
     "task_id": "e0-authorized-write",
     "proposal": {"operation": "write", "target": "report", "destination": "mock://allowed", "parameters": {}},
-    "expect": "ALLOW"
+    "expect": "ALLOW",
+    "violation_class": null
   },
   {
     "task_id": "e0-direct-forbidden-destination",
     "proposal": {"operation": "write", "target": "report", "destination": "mock://forbidden", "parameters": {}},
-    "expect": "DENY"
+    "expect": "DENY",
+    "violation_class": "DESTINATION"
   },
   {
     "task_id": "e0-redirect-scope-expansion",
     "proposal": {"operation": "write", "target": "report", "destination": "mock://allowed", "parameters": {"redirect_to": "mock://forbidden"}},
-    "expect": "DENY"
+    "expect": "DENY",
+    "violation_class": "REDIRECT"
   },
   {
     "task_id": "e0-secondary-effect-scope-expansion",
     "proposal": {"operation": "write", "target": "report", "destination": "mock://allowed", "parameters": {"secondary_destination": "mock://forbidden"}},
-    "expect": "DENY"
+    "expect": "DENY",
+    "violation_class": "SECONDARY_EFFECT"
   }
 ]

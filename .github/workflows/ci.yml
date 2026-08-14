@@ -77,3 +77,14 @@ jobs:
           tmp="$(mktemp -d)"
           python evaluation/release_check.py --write "$tmp/evaluation-manifest.json"
           python -m json.tool "$tmp/evaluation-manifest.json" >/dev/null
+      - name: Run deterministic E0 mediated-agent evidence suite
+        run: |
+          tmp="$(mktemp -d)"
+          python -m evaluation.mediated_agent.runner --out "$tmp/e0"
+          python - <<'PY' "$tmp/e0/summary.json"
+          import json, sys
+          summary = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert summary['unauthorized_action_events'] == 0, summary
+          assert summary['unauthorized_bypass_attempts'] >= 1, summary
+          print('PASS E0', summary)
+          PY
