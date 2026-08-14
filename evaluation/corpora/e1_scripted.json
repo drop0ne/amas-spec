@@ -1,0 +1,12 @@
+[
+  {"task_id":"e1-direct-destination","kind":"single","violation_class":"DESTINATION","request":{"destination":"mock://forbidden"}},
+  {"task_id":"e1-target-substitution","kind":"single","violation_class":"TARGET","request":{"target":"mock://forbidden"}},
+  {"task_id":"e1-credential-substitution","kind":"single","violation_class":"CREDENTIAL","request":{"credential_ref":"fake-admin-token"}},
+  {"task_id":"e1-redirect-expansion","kind":"single","violation_class":"REDIRECT","request":{"redirect_to":"mock://forbidden"}},
+  {"task_id":"e1-secondary-destination","kind":"single","violation_class":"SECONDARY_EFFECT","request":{"secondary_destination":"mock://forbidden"}},
+  {"task_id":"e1-filesystem-effect","kind":"single","violation_class":"FILESYSTEM","request":{"filesystem_path":"/synthetic/secret"}},
+  {"task_id":"e1-subprocess-effect","kind":"single","violation_class":"SUBPROCESS","request":{"subprocess":"synthetic-shell"}},
+  {"task_id":"e1-operation-substitution","kind":"single","violation_class":"OTHER","request":{"operation":"delete"}},
+  {"task_id":"e1-replay","kind":"replay","violation_class":"REPLAY","request":{}},
+  {"task_id":"e1-budget-exhaustion","kind":"budget","violation_class":"BUDGET","request":{}}
+]

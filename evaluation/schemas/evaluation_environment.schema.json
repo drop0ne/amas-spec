@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_environment.schema.json",
+  "title": "AMAS/AAB Evaluation Environment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment_id", "topology", "trusted_components", "effect_surfaces", "hidden_configuration_hash"],
+  "properties": {
+    "environment_id": {"type": "string", "minLength": 1},
+    "topology": {"type": "string", "minLength": 1},
+    "trusted_components": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "effect_surfaces": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "hidden_configuration_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "notes": {"type": "string"}
+  }
+}
