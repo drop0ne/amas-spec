@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_reconciliation.schema.json",
+  "title": "AMAS/AAB Evaluation Reconciliation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["execution_id", "action_hash", "prior_completion_state", "reconciliation_state", "retry_authorized"],
+  "properties": {
+    "execution_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "action_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "prior_completion_state": {"const": "OUTCOME_UNKNOWN"},
+    "reconciliation_state": {"enum": ["EFFECT_CONFIRMED", "NO_EFFECT_CONFIRMED"]},
+    "retry_authorized": {"const": false}
+  }
+}
