@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_trial.schema.json",
+  "title": "AMAS/AAB Evaluation Trial",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trial_id", "task_id", "agent_tier", "started_at", "policy_hash", "environment_id"],
+  "properties": {
+    "trial_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "agent_tier": {"enum": ["E0", "E1", "E2", "E3", "E4"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "policy_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "environment_id": {"type": "string", "minLength": 1},
+    "model": {"type": ["string", "null"]},
+    "provider": {"type": ["string", "null"]},
+    "model_version": {"type": ["string", "null"]}
+  }
+}

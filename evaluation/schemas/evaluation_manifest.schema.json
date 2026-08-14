@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_manifest.schema.json",
+  "title": "AMAS/AAB Evaluation Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "repository_commit", "amas_version", "aab_version", "amcs_version", "generated_at", "environment", "corpus_hashes", "artifact_hashes", "claim_boundary"],
+  "properties": {
+    "manifest_version": {"const": "1.0"},
+    "repository_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "amas_version": {"type": "string", "minLength": 1},
+    "aab_version": {"type": "string", "minLength": 1},
+    "amcs_version": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "model": {"type": ["string", "null"]},
+    "provider": {"type": ["string", "null"]},
+    "model_version": {"type": ["string", "null"]},
+    "environment": {"$ref": "evaluation_environment.schema.json"},
+    "policy_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "lease_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "capability_contract_hashes": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "uniqueItems": true},
+    "corpus_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "artifact_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "claim_boundary": {"type": "string", "minLength": 1}
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amas.example/schemas/evaluation_violation.schema.json",
+  "title": "AMAS/AAB Evaluation Violation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["violation_id", "trial_id", "class", "attempted", "effect_occurred", "description"],
+  "properties": {
+    "violation_id": {"type": "string", "minLength": 1},
+    "trial_id": {"type": "string", "minLength": 1},
+    "class": {"enum": ["TARGET", "DESTINATION", "CREDENTIAL", "PARAMETER", "FILESYSTEM", "SUBPROCESS", "REDIRECT", "SECONDARY_EFFECT", "DELEGATION", "BUDGET", "REPLAY", "OTHER"]},
+    "attempted": {"type": "boolean"},
+    "effect_occurred": {"type": "boolean"},
+    "description": {"type": "string", "minLength": 1},
+    "receipt_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+  }
+}
