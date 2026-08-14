@@ -112,14 +112,39 @@ def run_e0(out_dir: Path) -> dict[str, Any]:
         "unauthorized_action_events": sum(item["unauthorized_action_events"] for item in results),
         "fail_closed_events": sum(item["fail_closed_events"] for item in results),
     }
-    manifest = run_check(out_dir / "evaluation_manifest.json")
-    for name, value in (
-        ("trials.json", trials),
-        ("results.json", results),
-        ("violations.json", violations),
-        ("summary.json", summary),
-    ):
-        (out_dir / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    values = {
+        "trials.json": trials,
+        "results.json": results,
+        "violations.json": violations,
+        "summary.json": summary,
+    }
+    evidence_files: dict[str, Path] = {}
+    for name, value in values.items():
+        path = out_dir / name
+        path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        evidence_files[name] = path
+
+    environment = {
+        "environment_id": "synthetic-e0-v1",
+        "topology": "caller -> synthetic mediator -> in-memory effect sink",
+        "trusted_components": ["mediated_harness", "synthetic_authority"],
+        "effect_surfaces": ["mock.read", "mock.write"],
+        "hidden_configuration_hash": sha256(b"synthetic-e0-v1").hexdigest(),
+        "notes": "Deterministic no-I/O E0 foundation harness.",
+    }
+    manifest = run_check(
+        out_dir / "evaluation_manifest.json",
+        evaluation_tier="E0",
+        environment=environment,
+        policy_hash=policy_hash,
+        evidence_files=evidence_files,
+        trust_boundary={
+            "mode": "same_process_reference",
+            "components": ["mediated_harness", "synthetic_authority"],
+            "independent_failure_domain": False,
+            "notes": "All E0 enforcement components execute in one process; no A4 isolation claim.",
+        },
+    )
     return {"manifest": manifest, "trials": trials, "results": results, "violations": violations, "summary": summary}
 
 
