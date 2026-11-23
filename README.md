@@ -2,6 +2,9 @@
 
 **A formal governance and reference-enforcement architecture for contextual authority, durable memory, and bounded agent action.**
 
+> **Two different AMAS technologies share this acronym.** This repository's established root specification is **AMAS-AUTH — Authority Mapping and Arbitration System**. The separate **AMAS-MANIP — Adaptive Manipulation Analysis System** is a proposed manipulation/cognitive-integrity research technology associated with the AMAS–Symbalics work; its explanatory research materials are tracked separately under `research/amas-manip/`. The proposed **AMAS Integrity Plane** is an interface umbrella, not a third expansion. **Neither AMAS-MANIP nor Symbalics has an implemented/validated integrated runtime in this repository.** See `docs/AMAS_TECHNOLOGY_REGISTRY.md` and `docs/AMAS_SOURCE_LINEAGE.md`.
+
+
 - **AMAS Core:** 2.0-draft, revision 2026-08-12
 - **AAB extension:** 0.4.1-draft hardening line
 - **AMCS reference engine:** 0.3.3, implementing the tested AMCS v1.2.1 INTERNAL surfaces described here

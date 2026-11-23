@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/amas/schemas/manipulation_signal.json",
+  "title": "AMAS-MANIP experimental non-authorizing signal",
+  "description": "Research annotation only. NEVER an authority, policy decision, diagnosis, or external action authorization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "technology",
+    "signal_id",
+    "source_ref",
+    "epistemic_status",
+    "indicators",
+    "alternative_explanations",
+    "limitations",
+    "review_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1-research"
+    },
+    "technology": {
+      "const": "AMAS-MANIP"
+    },
+    "signal_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "source_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "epistemic_status": {
+      "enum": [
+        "OBSERVATION",
+        "REPORTED",
+        "INFERENCE",
+        "HYPOTHESIS",
+        "FICTION",
+        "UNKNOWN"
+      ]
+    },
+    "indicators": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimension",
+          "description",
+          "evidence_refs"
+        ],
+        "properties": {
+          "dimension": {
+            "enum": [
+              "provenance_weakness",
+              "authority_spoofing",
+              "repetition_without_new_evidence",
+              "emotional_leverage",
+              "urgency_pressure",
+              "identity_overwrite",
+              "epistemic_drift",
+              "frame_capture",
+              "privacy_pressure",
+              "action_pressure",
+              "affiliation_pressure",
+              "burden_reversal",
+              "false_dilemma",
+              "selective_literalism",
+              "procedural_capture"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          }
+        }
+      }
+    },
+    "alternative_explanations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    },
+    "review_status": {
+      "enum": [
+        "unreviewed",
+        "needs_human_review",
+        "contested",
+        "reviewed_observation_only"
+      ]
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000
+    }
+  }
+}
