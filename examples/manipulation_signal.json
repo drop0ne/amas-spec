@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1-research",
+  "technology": "AMAS-MANIP",
+  "signal_id": "demo-001",
+  "source_ref": "synthetic:message-sequence-001",
+  "epistemic_status": "OBSERVATION",
+  "indicators": [
+    {
+      "dimension": "repetition_without_new_evidence",
+      "description": "A fictional reminder repeated the same deadline with no new supporting data in the sample.",
+      "evidence_refs": [
+        "synthetic:line-2",
+        "synthetic:line-5"
+      ]
+    }
+  ],
+  "alternative_explanations": [
+    "Ordinary emphasis or legitimate reminder in a time-sensitive workflow."
+  ],
+  "limitations": [
+    "Synthetic example; no real subject or intent attribution; not calibrated."
+  ],
+  "review_status": "unreviewed"
+}
